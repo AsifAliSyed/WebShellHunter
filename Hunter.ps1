@@ -104,8 +104,8 @@ $filetypes = @(
 $scriptblock = {
     param (
         $file,
-        [switch]$detailed,
-        [switch]$speedInfo,
+        $detailed,
+        $speedInfo,
         $missedShells,
         $testFile
     )
@@ -114,10 +114,15 @@ $scriptblock = {
     # We have to set the preference variables again inside our scriptblock as runspace threads do not inherit any of these
     # settings from the caller
     # Turn this on with -SpeedInfo on the commandline
-    $InformationPreference = "Continue" 
-    $VerbosePreference = "Continue"
-    $DebugPreference = "Continue"
-    
+   if ($speedinfo) {
+      $InformationPreference = "Continue" 
+   }
+   if ($detailed) {
+       $VerbosePreference = "Continue"
+   }
+   if ($missedShells) {
+       $DebugPreference = "Continue"
+   }
     #-----------------------------------------------------------[Variables]------------------------------------------------------------
 
     
@@ -631,7 +636,15 @@ $scriptblock = {
    # These two lines are the only 'execution' lines, the rest of the thread scriptblock is just
    # Detection method functions for the Check-File function to call.
    $scanResults = Check-File $file
-   return $file, $scanResults, $testFile
+   [void]$fileResults.tryAdd( $file.name, [pscustomobject]@{
+      # $file actually contains all of the file metadata that powershell pulls when you gci a file. We dont trim it.
+      # Not sure if we should. 
+      filename          = $file.Name
+      filepath          = $file.Fullname
+      filelength        = $file.Length
+      scanResults       = $scanResults
+      IsTestFile        = $testFile
+   })
 }
 
 function normalize {
@@ -688,6 +701,14 @@ Function Generate-InterestingScore {
     }
     return $results
 }
+# Function to create thread-safe hashtable (requires .NET 4.0+):
+function New-ThreadSafeTypedDictionary([Type] $KeyType, [Type] $ValueType)
+{
+    $GenericDict = [System.Collections.Concurrent.ConcurrentDictionary``2]
+    $GenericDict = $GenericDict.MakeGenericType( @($KeyType, $ValueType) )
+    New-Object -TypeName $GenericDict 
+}
+
 
 #-----------------------------------------------------------[Execution]------------------------------------------------------------
 
@@ -695,17 +716,6 @@ $stopwatch.Start()
 
 # Results hashtable to store the result objects for each file scanned
 $results = New-Object -TypeName psobject
-# Runspace Pool Boilerplate, not interesting.
-# All we have changed is the max threads to run, which is half of the total on the current system
-$pool = [RunspaceFactory]::CreateRunspacePool(1,[int]$env:NUMBER_OF_PROCESSORS /2)
-$pool.ApartmentState = "MTA"
-$pool.Open()
-$runspaces = [System.Collections.ArrayList]@()
-
-# We'll store all the detection results for each file into this array and slap the array into the final 
-# $results custom object. 
-$fileResults = [System.Collections.ArrayList]@()
-
 # Grab all the files for both our hunt path and test path that we are going to scan through later
 $files = Get-ChildItem -Path $huntPath -include $fileTypes -Recurse
 if ($testPath) {
@@ -717,6 +727,34 @@ if ($testpath ) {
 } else {
     $filecount = $files.count 
 }
+
+#$pool.ApartmentState = "MTA"
+
+$runspaces = @()
+
+# We'll store all the detection results for each file into this array and slap the array into the final 
+# $results custom object. 
+# Create a variable to collect the output of the runspace threads.
+# Preferably, it should be thread safe, e.g., a concurrent dictionary.
+# Without this, each command must output to a different array.
+$fileResults = New-ThreadSafeTypedDictionary -KeyType 'String' -ValueType 'object' 
+
+# Define the initial session state for a pool:
+$SessionState = [System.Management.Automation.Runspaces.InitialSessionState]::CreateDefault()
+$SessionState.ApartmentState = 'STA'
+$SessionState.ThreadOptions = 'ReuseThread'
+
+# Add a variable to the session state pool that can be used to pass in data and/or collect output:
+# ArgumentList = name of the variable, initial value of variable, an optional description
+$SessionVar = New-Object -TypeName System.Management.Automation.Runspaces.SessionStateVariableEntry -ArgumentList @("fileResults", $fileResults, 'detection method hits for each file') 
+$SessionState.Variables.Add( $SessionVar ) 
+
+# Create between 1 (min) and 4 (max) runspaces in a pool, with an initial session state, in the current PowerShell host:
+$Pool = [System.Management.Automation.Runspaces.RunspaceFactory]::CreateRunspacePool(1, 4, $SessionState, $Host)
+
+# Open the runspace pool:
+$Pool.Open()
+
 # Only used for the write-progress counter a few lines down
 $step = 1
 # This is the main loop that will search the huntPath. TestPath is handled later.
@@ -724,15 +762,21 @@ Write-Host "Creating Hunt Path runspaces" -ForegroundColor Yellow
 $testFile = $false
 foreach ($file in $files) 
 {
-    write-progress -Activity "Adding runspaces to pool" -Status "creating runspace $step/$filecount" -PercentComplete(($step / $filecount) * 100 )
+   # $file,
+   # $detailed,
+   # $speedInfo,
+   # $missedShells,
+   # $testFile
+#write-progress -Activity "Adding runspaces to pool" -Status "creating runspace $step/$filecount" -PercentComplete(($step / $filecount) * 100 )
     $runspace = [PowerShell]::Create()
     [void]$runspace.AddScript($scriptblock)
     [void]$runspace.AddArgument($file)
-    [void]$runspace.AddArgument($testFile)
+    [void]$runspace.AddArgument($detailed)
+    [void]$runspace.AddArgument($speedInfo)
     [void]$runspace.AddArgument($missedShells)
-    if ($detailed) {[void]$runspace.AddArgument($detailed)}
+    [void]$runspace.AddArgument($testfile)
     $runspace.runspacepool = $pool
-    $null = $runspaces.Add( [PSCustomObject]@{Pipe = $runspace; Status = $runspace.BeginInvoke()} )
+    $runspaces += $runspace.BeginInvoke()
     if ($step -ne $filecount) {$step++}
 }
 if ($testPath) {
@@ -752,52 +796,21 @@ if ($testPath) {
 }
 write-host "Hunt Path Runspaces created. Waiting for results to return." -ForegroundColor Green
 
-while ($runspaces.Status -ne $null)
+while ($true)
 {
-    $completed = $runspaces | Where-object { $_.Status.IsCompleted -eq $true }
-    foreach ($runspace in $completed) 
-    {
-        write-progress -Activity "Retrieving runspace results" -Status "runspaces left $step/$filecount" -PercentComplete(($step / $filecount) * 100 )
-        # Output errors, verbose or speed information is the user has flipped the right switches
-        if ($err) 
-        {
-            Write-host $runspace.Pipe.Streams.Error
-        }
-        if ($detailed) 
-        {
-            Write-host $runspace.Pipe.Streams.Verbose -ForegroundColor Gray
-        }
-        if ($speedInfo) {
-            write-host $runspace.Pipe.Streams.Information -ForegroundColor DarkYellow
-        }
-        if ($missedShells) {
-            write-host $runspace.Pipe.Streams.Debug -ForegroundColor Magenta
-        }
-
-            
-        $file, $scanResults, $testFile = $runspace.Pipe.EndInvoke($runspace.Status)
-        $runspace.Status = $null
-        if ($step -ne 1) {$step--}
-            
-        if ($scanResults.count -eq 0) {continue}
-        # I was storing all of the results into individual hashtables for each detection method.
-        # it was not scaling well and getting a bit messy. This custom object is the fix. We can now add
-        # as many detection functions as we like and they store into this object without 
-        # requiring extra code down here.
-        $null = $fileResults.Add( [pscustomobject]@{
-            # $file actually contains all of the file metadata that powershell pulls when you gci a file. We dont trim it.
-            # Not sure if we should. 
-            filename          = $file.Name
-            filepath          = $file.Fullname
-            filelength        = $file.Length
-            scanResults       = $scanResults
-            IsTestFile        = $testFile
-        })
-    }
+    Start-Sleep -Milliseconds 1
+    
+    $runspaces | Where { $_.IsCompleted -eq $False } | ForEach { Continue }
+   # Clean up objects and break out of the While loop: 
+   $runspaces | ForEach { $_.AsyncWaitHandle.Close() }
+   $runspaces = @() 
+   $runspace = $null 
+   $pool.Close()
+   $pool.Dispose() 
+   Break 
 }
-$pool.Close() 
-$pool.Dispose()
 
+$fileResults = $fileResults.Values
 # We want to go through each detection methods results and pull out the top 10 results by score.
 # this lets us give the user a starting point for analysis. If we scan 3000 files and get 100 "webshells"
 # its hard to know which ones to check first and this tool probably just wouldnt be used at that point.
@@ -814,7 +827,7 @@ foreach ($method in $fileResults.scanresults.Keys)
     # Not sure why, but empty methods kept popping up, so we just skip them as an easy fix 
     if (!($checkedMethods.Contains($method)) -and $method -ne $null) 
     {
-        $top10 = $fileresults.GetEnumerator() | Sort-Object { $_.ScanResults.$method.Score } -Descending | Select -First 10
+        $top10 = $fileresults.GetEnumerator() | Where-Object {$_.scanResults.$method.Score -gt 0 } | Sort-Object { $_.ScanResults.$method.Score } -Descending | Select -First 10
         # Gotta build up the key string before we make the custom object so that the key can be dynamically named
         $top10string = "top10$method"
         $top10results | add-member -memberType NoteProperty -Name $top10string -value $top10
