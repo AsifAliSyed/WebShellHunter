@@ -25,6 +25,13 @@
   Threads will return information on execution times.
   Use this to find and optimize performance on slow functions
 
+.PARAMETER missedShells
+   if this is selected along with -testPath, we output to the screen any shells that the script didnt pick up
+   as webshells at all. Use for testing new detections
+
+.PARAMETER maxThreads
+   Set the Maximum number of threads to use. Default is half of the available threads on the system.
+
 .OUTPUTS
   Log file stored in current executing directory by default.
   Change output path with -logPath parameter. 
@@ -52,7 +59,8 @@ param (
    [Parameter(Mandatory=$false)] [switch]$detailed,
    [Parameter(Mandatory=$false)] [switch]$err,
    [Parameter(Mandatory=$false)] [switch]$speedInfo,
-   [Parameter(Mandatory=$false)] [switch]$missedShells
+   [Parameter(Mandatory=$false)] [switch]$missedShells,
+   [Parameter(Mandatory=$false)] [int]$maxThreads = [int]$env:NUMBER_OF_PROCESSORS /2
 )
 
 #---------------------------------------------------------[Initialisations]--------------------------------------------------------
@@ -73,7 +81,6 @@ if ($speedInfo) {
 if ($missedShells) {
     $DebugPreference = "Continue"
 }
-
 $progressPreference = "Continue"
 
 #----------------------------------------------------------[Declarations]----------------------------------------------------------
@@ -724,80 +731,76 @@ if ($testpath ) {
 } else {
     $filecount = $files.count 
 }
+if ($filecount -eq 0 ) {
+   Write-Error "No files found. Confirm your -huntPath"
+   Exit 
+}
 
-#$pool.ApartmentState = "MTA"
-
+# The next block of code is setting up the multithreading stuff we need.
+# Big thanks to https://github.com/SamuelArnold/StarKill3r/blob/master/Star%20Killer/Star%20Killer/bin/Debug/Scripts/SANS-SEC505-master/scripts/Day1-PowerShell/Runspace-Pool-Examples.ps1
+# Most of this is taken from there, with only minor tweaking needed.
+# Create array to hold all of our runspaces
 $runspaces = @()
-
-# We'll store all the detection results for each file into this array and slap the array into the final 
-# $results custom object. 
-# Create a variable to collect the output of the runspace threads.
-# Preferably, it should be thread safe, e.g., a concurrent dictionary.
-# Without this, each command must output to a different array.
+# This is our threadsafe Hashtable we'll pass into each thread. Each thread will scan a seperate file
+# and store its results into this hashtable. 
 $fileResults = New-ThreadSafeTypedDictionary -KeyType 'String' -ValueType 'object' 
-
-# Define the initial session state for a pool:
+# Define the initial session state for our pool
 $SessionState = [System.Management.Automation.Runspaces.InitialSessionState]::CreateDefault()
 $SessionState.ApartmentState = 'STA'
 $SessionState.ThreadOptions = 'ReuseThread'
-
 # Add a variable to the session state pool that can be used to pass in data and/or collect output:
 # ArgumentList = name of the variable, initial value of variable, an optional description
 $SessionVar = New-Object -TypeName System.Management.Automation.Runspaces.SessionStateVariableEntry -ArgumentList @("fileResults", $fileResults, 'detection method hits for each file') 
 $SessionState.Variables.Add( $SessionVar ) 
-
-# Create between 1 (min) and 4 (max) runspaces in a pool, with an initial session state, in the current PowerShell host:
-$Pool = [System.Management.Automation.Runspaces.RunspaceFactory]::CreateRunspacePool(1, 4, $SessionState, $Host)
-
+# Create between 1 (min) and $maxthreads runspaces in a pool, with an initial session state, in the current PowerShell host:
+$Pool = [System.Management.Automation.Runspaces.RunspaceFactory]::CreateRunspacePool(1, $maxThreads, $SessionState, $Host)
 # Open the runspace pool:
 $Pool.Open()
 
-# Only used for the write-progress counter a few lines down
-$step = 1
-# This is the main loop that will search the huntPath. TestPath is handled later.
+# Loop through all of our huntpath and testpath (if selected) files and create a runspace for each one, passing in any relevant switches
+# and then invoking the runspace.
 Write-Host "Creating Hunt Path runspaces" -ForegroundColor Yellow
+# We set testfile to false so that each thread in huntpath can note in its results that this file is part of huntpath.
+# this lets us seperate legitimate files vs test webshells later on.
 $testFile = $false
 foreach ($file in $files) 
 {
-   # $file,
-   # $detailed,
-   # $speedInfo,
-   # $missedShells,
-   # $testFile
-#write-progress -Activity "Adding runspaces to pool" -Status "creating runspace $step/$filecount" -PercentComplete(($step / $filecount) * 100 )
-    $runspace = [PowerShell]::Create()
-    [void]$runspace.AddScript($scriptblock)
-    [void]$runspace.AddArgument($file)
-    [void]$runspace.AddArgument($detailed)
-    [void]$runspace.AddArgument($speedInfo)
-    [void]$runspace.AddArgument($missedShells)
-    [void]$runspace.AddArgument($testfile)
-    $runspace.runspacepool = $pool
-    $runspaces += $runspace.BeginInvoke()
-    if ($step -ne $filecount) {$step++}
+   # Generate the runspaces for all of the files in our huntpath
+   $runspace = [PowerShell]::Create()
+   [void]$runspace.AddScript($scriptblock)
+   [void]$runspace.AddArgument($file)
+   [void]$runspace.AddArgument($detailed)
+   [void]$runspace.AddArgument($speedInfo)
+   [void]$runspace.AddArgument($missedShells)
+   [void]$runspace.AddArgument($testfile)
+   $runspace.runspacepool = $pool
+   $runspaces += $runspace.BeginInvoke()
 }
 if ($testPath) {
-    $testFile = $true
-    foreach ($file in $testfiles) 
-    {
-        write-progress -Activity "Adding runspaces to pool" -Status "creating runspace $step/$filecount" -PercentComplete(($step / $filecount) * 100 )
-        $runspace = [PowerShell]::Create()
-        [void]$runspace.AddScript($scriptblock)
-        [void]$runspace.AddArgument($file)
-        [void]$runspace.AddArgument($testFile)
-        if ($detailed) {[void]$runspace.AddArgument($detailed)}
-        $runspace.runspacepool = $pool
-        $null = $runspaces.Add( [PSCustomObject]@{Pipe = $runspace; Status = $runspace.BeginInvoke()} )
-        if ($step -ne $filecount) {$step++}
-    }
+   # now set testfile to true to so we can tag all of these as testfiles within the threads returned results.
+   # again, this lets us seperate test files from legit files later so we can determine whether "caught" files are test ones or not.
+   $testFile = $true
+   # Generate the runspaces for all of the files in our testpath
+   foreach ($file in $testfiles) 
+   {
+      $runspace = [PowerShell]::Create()
+      [void]$runspace.AddScript($scriptblock)
+      [void]$runspace.AddArgument($file)
+      [void]$runspace.AddArgument($detailed)
+      [void]$runspace.AddArgument($speedInfo)
+      [void]$runspace.AddArgument($missedShells)
+      [void]$runspace.AddArgument($testfile)
+      $runspace.runspacepool = $pool
+      $runspaces += $runspace.BeginInvoke()
+   }
 }
-write-host "Hunt Path Runspaces created. Waiting for results to return." -ForegroundColor Green
+write-host "All Runspaces created. Waiting for results to return." -ForegroundColor Green
 
+#Loop Forever until all of our runspaces have reported in as complete
 while ($true)
 {
-    Start-Sleep -Milliseconds 1
     
-    $runspaces | Where-Object { $_.IsCompleted -eq $False } | ForEach-Object { Continue }
+   $runspaces | Where-Object { $_.IsCompleted -eq $False } | ForEach-Object { Continue }
    # Clean up objects and break out of the While loop: 
    $runspaces | ForEach-Object { $_.AsyncWaitHandle.Close() }
    $runspaces = @() 
@@ -807,6 +810,8 @@ while ($true)
    Break 
 }
 
+# Trim fileresults down to just what the threads returned. We could skip this if we used some kind of thread safe array.
+# But I'm still learning.
 $fileResults = $fileResults.Values
 # We want to go through each detection methods results and pull out the top 10 results by score.
 # this lets us give the user a starting point for analysis. If we scan 3000 files and get 100 "webshells"
@@ -817,7 +822,6 @@ $checkedMethods = @()
 # Initially I was trying to just append straight to the final $results object as we went. 
 # but that messed the json output in a way I didnt like. So we store the top10's in an intermediary variable.
 $top10Results = New-object -TypeName psobject
-
 # Loop through each detection method so we can build up a top 10 list for each method that fired during this scan
 foreach ($method in $fileResults.scanresults.Keys) 
 {
@@ -837,9 +841,9 @@ foreach ($method in $fileResults.scanresults.Keys)
 $fileResults = New-InterestingScore $fileResults
 # Build the top ten most interesting files to look at based on the previously generated "Interesting Score"
 $top10Interesting = $fileResults.GetEnumerator() | Sort-Object { $_.InterestingScore} -Descending | Select-Object -Property @{Name="Score"; Expression={$_.interestingscore}}, filename, filepath -First 10
-
+# This is why set set $testfile and pass it to each runspace. We look for which files are testfiles and which ones arent to generate a count of
+# how many files we matches against in our huntpath vs our testpath
 $HitCount = ($fileResults.GetEnumerator() | Where-Object {$_.istestfile -eq $false}).count
-
 $TestFileHits = ($fileResults.GetEnumerator() | Where-Object {$_.istestfile -eq $true}).count
 
 # Build everything we have discovered into our final variable that we can JSONify later
@@ -854,10 +858,10 @@ $results | Add-Member -MemberType NoteProperty -Name "TestFileResults" -Value $T
 
 #-----------------------------------------------------------[Print/Log Results]------------------------------------------------------------
 
-# Top 10 Files Overall Table
+# Print out of Top 10 Files Overall Table
 Write-Host "`n`n`t`tTop files to look at" -ForegroundColor Green
 $results.Top10overall  | Format-Table
-# Top Results for each detection method Table
+# Print out our Top Results for each detection method Table
 $results.top10PerMethod | Get-Member -type NoteProperty | foreach-object {
     $method = $_.name
     $methodShort = $_.name.Tostring().Replace("top10", "")
@@ -866,7 +870,7 @@ $results.top10PerMethod | Get-Member -type NoteProperty | foreach-object {
                                                      filename,
                                                     filepath | Format-Table
 }
-# Stats
+# Print some Stats
 write-host "`tHunt Directory:" $results.HitCount"/"$results.TotalFilesScanned -Foregroundcolor green
 if ($testPath) {
     write-host "`tTest Directory:" $results.TestFileHitCount"/"$results.TotalTestFilesScanned -Foregroundcolor yellow
