@@ -50,3 +50,11 @@ Scan a web directory and also scan a second directory with legitimate webshell i
 to test whether or not a webshell would have been detected amidst the noise of your legitimate files, without having
 to place a webshell in your web directory.
 > .\Hunter.ps1 -HuntPath C:\Inetpub\wwwroot -testPath c:\users\webshells\testshells\ -json results.json
+
+
+## TODOs
+
+- [ ] More Detection Methods
+- [ ] Rewrite in Go?
+- [ ] Make str_replace work with variables
+- [ ] 
