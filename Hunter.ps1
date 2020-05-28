@@ -50,7 +50,7 @@ param (
    [Parameter(Mandatory=$false)] [string]$testPath,
    [Parameter(Mandatory=$false)] [string]$json,
    [Parameter(Mandatory=$false)] [switch]$detailed,
-   [Parameter(Mandatory=$false)] [switch]$error,
+   [Parameter(Mandatory=$false)] [switch]$err,
    [Parameter(Mandatory=$false)] [switch]$speedInfo,
    [Parameter(Mandatory=$false)] [switch]$missedShells
 )
@@ -58,7 +58,7 @@ param (
 #---------------------------------------------------------[Initialisations]--------------------------------------------------------
 
 #Set Error Action to Silently Continue
-if ($error) {
+if ($err) {
     $ErrorActionPreference = "Continue"
 }
 # Flip it to "continue" if you're having troubles and want more info.
@@ -114,15 +114,10 @@ $scriptblock = {
     # We have to set the preference variables again inside our scriptblock as runspace threads do not inherit any of these
     # settings from the caller
     # Turn this on with -SpeedInfo on the commandline
-    if ($speedInfo) 
-    {
-       $InformationPreference = "Continue" 
-    }
+    $InformationPreference = "Continue" 
     $VerbosePreference = "Continue"
-    if ($missedShells) 
-    {
-        $DebugPreference = "Continue"
-    }
+    $DebugPreference = "Continue"
+    
     #-----------------------------------------------------------[Variables]------------------------------------------------------------
 
     
@@ -614,11 +609,10 @@ $scriptblock = {
                           Indicators =  "No indicators exist for entropy hits."}
              }
              Write-Verbose "-------------FILECHECKCOMPLETE--------------`n"
-             if ($testFile -and $scanResults -eq $null) {
+             Write-Debug "$testFile $fullPath"
+             if ($testFile -eq $true -and $results.count -eq 0) {
                 Write-Debug "MISSED: $fullpath"
              }
-
-             Write-Debug "test"
              return $scanResults
           }
           Catch
@@ -711,7 +705,6 @@ $runspaces = [System.Collections.ArrayList]@()
 # We'll store all the detection results for each file into this array and slap the array into the final 
 # $results custom object. 
 $fileResults = [System.Collections.ArrayList]@()
-$TestFileResults = [System.Collections.ArrayList]@()
 
 # Grab all the files for both our hunt path and test path that we are going to scan through later
 $files = Get-ChildItem -Path $huntPath -include $fileTypes -Recurse
@@ -766,7 +759,7 @@ while ($runspaces.Status -ne $null)
     {
         write-progress -Activity "Retrieving runspace results" -Status "runspaces left $step/$filecount" -PercentComplete(($step / $filecount) * 100 )
         # Output errors, verbose or speed information is the user has flipped the right switches
-        if ($error) 
+        if ($err) 
         {
             Write-host $runspace.Pipe.Streams.Error
         }
@@ -835,7 +828,7 @@ $fileResults = Generate-InterestingScore $fileResults
 # Build the top ten most interesting files to look at based on the previously generated "Interesting Score"
 $top10Interesting = $fileResults.GetEnumerator() | Sort-Object { $_.InterestingScore} -Descending | Select-Object -Property @{Name="Score"; Expression={$_.interestingscore}}, filename, filepath -First 10
 $HitCount = ($fileResults.GetEnumerator() | where {$_.istestfile -eq $false}).count
-$TestFileHits = ($fileResults.GetEnumerator() | where {$_.istestfile -eq $true}).count
+$TestFileHits = ($fileResults.GetEnumerator() | Where-Object {$_.istestfile -eq $true}).count
 
 # Build everything we have discovered into our final variable that we can JSONify later
 $results | Add-member -MemberType NoteProperty -Name "TotalFilesScanned" -Value $files.count
