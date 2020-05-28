@@ -8,7 +8,7 @@ This tool was designed with SOC's in mind, so with that we decided whatever the 
 
 For this reason we have initially decided to write the tool in powershell. This is because most webservers we protect happen to be hosted on Windows (Sorry Linux heavy SOCs). The tradeoff for this decision is speed. Powershell is not the fastest language out there.
 
-##Usage
+## Usage
 
 Steps:
 - Download [Hunter.ps1](https://github.com/ParaFlare/WebShellHunter/blob/master/Hunter.ps1)
