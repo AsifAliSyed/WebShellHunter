@@ -6,6 +6,8 @@ This tool was designed with SOC's in mind, so with that we decided whatever the 
 - No software dependencies. You aren't likely to be able to install extra software on your clients infrastructure just to run a tool.
 - No extra library dependencies. We only want to push one file across to the endpoint for execution.
 
-For this reason we have initially decided to write the tool in powershell. This is because most webservers we protect happen to be hosted on Windows (Sorry Linux heavy SOCs).
+For this reason we have initially decided to write the tool in powershell. This is because most webservers we protect happen to be hosted on Windows (Sorry Linux heavy SOCs). The tradeoff for this decision is speed. Powershell is not the fastest language out there.
+
+
 
 
