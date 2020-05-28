@@ -58,3 +58,4 @@ to place a webshell in your web directory.
 - [ ] Rewrite in Go?
 - [ ] Make str_replace work with variables
 - [X] Make a To Do list to give me an easy win
+- [ ] Add Regression Testing
