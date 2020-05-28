@@ -57,4 +57,4 @@ to place a webshell in your web directory.
 - [ ] More Detection Methods
 - [ ] Rewrite in Go?
 - [ ] Make str_replace work with variables
-- [X] Make a ToDo list to give me an easy win
+- [X] Make a To Do list to give me an easy win
