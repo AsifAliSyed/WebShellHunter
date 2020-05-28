@@ -78,9 +78,6 @@ $progressPreference = "Continue"
 
 #----------------------------------------------------------[Declarations]----------------------------------------------------------
 
-#Script Version
-$ScriptVersion = "1.0"
-
 # performance counter
 $stopwatch = New-object System.Diagnostics.Stopwatch
 
@@ -188,11 +185,11 @@ $scriptblock = {
              # This function is taken from https://rosettacode.org/wiki/Entropy
              # Ask me how it works are your own peril. The result is an entropy score.
              $n = $string.Length
-             $entropy = $string.ToCharArray() | group | foreach{
+             $entropy = $string.ToCharArray() | Group-Object | ForEach-Object {
                 $p = $_.Count/$n
                 $i = [Math]::Log($p,2)
                 -$p*$i
-             } | measure -Sum | foreach Sum
+             } | Measure-Object -Sum | ForEach-Object Sum
 
              return $entropy
           }
@@ -235,7 +232,7 @@ $scriptblock = {
                 if ($linecount -eq 10000) 
                 {
                     $reader.Dispose()
-                    $stringsMatched = $stringsMatched | select -Unique
+                    $stringsMatched = $stringsMatched | Select-Object -Unique
                     $stringCount = $stringsMatched.Count
                     return $stringCount, $stringsMatched, $linecount}
                 if ($Line.length -eq 0 -or $Line -match "^ *[\*/]") 
@@ -253,7 +250,7 @@ $scriptblock = {
 
              }
              $reader.Dispose()
-             $stringsMatched = $stringsMatched | select -Unique
+             $stringsMatched = $stringsMatched | Select-Object -Unique
              $stringCount = $stringsMatched.Count
              return $stringCount, $stringsMatched, $linecount
           }
@@ -335,7 +332,7 @@ $scriptblock = {
                 $filecontents = $filecontents.Replace($src, $dst)
              }
              
-             $fileContents -split '\n' | % {
+             $fileContents -split '\n' | ForEach-Object {
                 $line = $_
                 if ($Line -match "^ *[\*/]") 
                 {
@@ -347,7 +344,7 @@ $scriptblock = {
                         $hit = ($line | select-string $condition -AllMatches).Matches.Value
                         if ($hit) 
                         { 
-                            $hit | % {                                          
+                            $hit | ForEach-Object {                                          
                                 Write-Verbose "Found Matches: $_`n"
                                 $null = $stringsMatched.Add($_)
                             }
@@ -355,7 +352,7 @@ $scriptblock = {
                         }
                     }
             }
-            $stringsMatched = $stringsMatched | select -Unique
+            $stringsMatched = $stringsMatched | Select-Object -Unique
             $stringCount = $stringsMatched.Count
              # The deobfuscated contents arent checked for webshell stuff here, simply passed back to Check-File to be put through all the usual tests.
              return $stringsMatched, $stringCount
@@ -451,8 +448,8 @@ $scriptblock = {
                     }
                 }
             }
-            $MostAddedtoVarCount = ($VarsCount.GetEnumerator() | sort -property Value -Descending | select -first 1).value
-            $MostAddedtoVar = ($VarsCount.GetEnumerator() | sort -property Value -Descending | select -first 1).Name
+            $MostAddedtoVarCount = ($VarsCount.GetEnumerator() | Sort-Object -property Value -Descending | Select-Object -first 1).value
+            $MostAddedtoVar = ($VarsCount.GetEnumerator() | Sort-Object -property Value -Descending | Select-Object -first 1).Name
             $reader.Dispose()
             return $MostAddedtoVarCount, $MostAddedtoVar
             $reader.Dispose()
@@ -474,7 +471,7 @@ $scriptblock = {
        }
     }
 
-    Function Check-File
+    Function Search-Shells
     {
        Param($file)
 
@@ -635,7 +632,7 @@ $scriptblock = {
    # ----------- Thread Execution --------------- #
    # These two lines are the only 'execution' lines, the rest of the thread scriptblock is just
    # Detection method functions for the Check-File function to call.
-   $scanResults = Check-File $file
+   $scanResults = Search-Shells $file
    [void]$fileResults.tryAdd( $file.name, [pscustomobject]@{
       # $file actually contains all of the file metadata that powershell pulls when you gci a file. We dont trim it.
       # Not sure if we should. 
@@ -674,7 +671,7 @@ function normalize {
 
 }
 
-Function Generate-InterestingScore {
+Function New-InterestingScore {
     param(
         $results
     )
@@ -800,9 +797,9 @@ while ($true)
 {
     Start-Sleep -Milliseconds 1
     
-    $runspaces | Where { $_.IsCompleted -eq $False } | ForEach { Continue }
+    $runspaces | Where-Object { $_.IsCompleted -eq $False } | ForEach-Object { Continue }
    # Clean up objects and break out of the While loop: 
-   $runspaces | ForEach { $_.AsyncWaitHandle.Close() }
+   $runspaces | ForEach-Object { $_.AsyncWaitHandle.Close() }
    $runspaces = @() 
    $runspace = $null 
    $pool.Close()
@@ -825,9 +822,9 @@ $top10Results = New-object -TypeName psobject
 foreach ($method in $fileResults.scanresults.Keys) 
 {
     # Not sure why, but empty methods kept popping up, so we just skip them as an easy fix 
-    if (!($checkedMethods.Contains($method)) -and $method -ne $null) 
+    if (!($checkedMethods.Contains($method)) -and $null -ne $method ) 
     {
-        $top10 = $fileresults.GetEnumerator() | Where-Object {$_.scanResults.$method.Score -gt 0 } | Sort-Object { $_.ScanResults.$method.Score } -Descending | Select -First 10
+        $top10 = $fileresults.GetEnumerator() | Where-Object {$_.scanResults.$method.Score -gt 0 } | Sort-Object { $_.ScanResults.$method.Score } -Descending | Select-Object -First 10
         # Gotta build up the key string before we make the custom object so that the key can be dynamically named
         $top10string = "top10$method"
         $top10results | add-member -memberType NoteProperty -Name $top10string -value $top10
@@ -837,7 +834,7 @@ foreach ($method in $fileResults.scanresults.Keys)
 }
 
 # Generate an "Interesting Score" for every file we had a hit on. This will build our "Top files to look at" table at the end.
-$fileResults = Generate-InterestingScore $fileResults
+$fileResults = New-InterestingScore $fileResults
 # Build the top ten most interesting files to look at based on the previously generated "Interesting Score"
 $top10Interesting = $fileResults.GetEnumerator() | Sort-Object { $_.InterestingScore} -Descending | Select-Object -Property @{Name="Score"; Expression={$_.interestingscore}}, filename, filepath -First 10
 
