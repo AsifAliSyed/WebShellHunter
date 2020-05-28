@@ -827,7 +827,9 @@ foreach ($method in $fileResults.scanresults.Keys)
 $fileResults = Generate-InterestingScore $fileResults
 # Build the top ten most interesting files to look at based on the previously generated "Interesting Score"
 $top10Interesting = $fileResults.GetEnumerator() | Sort-Object { $_.InterestingScore} -Descending | Select-Object -Property @{Name="Score"; Expression={$_.interestingscore}}, filename, filepath -First 10
-$HitCount = ($fileResults.GetEnumerator() | where {$_.istestfile -eq $false}).count
+
+$HitCount = ($fileResults.GetEnumerator() | Where-Object {$_.istestfile -eq $false}).count
+
 $TestFileHits = ($fileResults.GetEnumerator() | Where-Object {$_.istestfile -eq $true}).count
 
 # Build everything we have discovered into our final variable that we can JSONify later
