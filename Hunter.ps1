@@ -129,28 +129,70 @@ $scriptblock = {
     # How many times a variable can be added to with .= before we declare webshell
     $varUsageThreshold = 50
     # List of strings to match against for our basic string match detections
-   #  $regexList = (
-   #  '[^\d\w\W](gcc |chmod +x|/bin/sh|/bin/bash|BufferedInputStream|ByteArrayOutputStream|new BASE64Decoder|.decodeBuffer|VBscript.Encode|cmd|ini_set\(allow_url_fopen true\)|ini_set\(allow_url_include true\)|VBSCRIPT|Scripting.FileSystemObject|adodb.stream|system\(\$_GET|exploit|lave|noitcnuf_etaerc|metsys|urhtssap|llehs|etucexe_llehs|tressa|edoced_46esab|sserpmocnuzg|nepop|nepokcosf|tcartxe|posix_|win32_create_service|xmlrpc_decode|.bash_history|.ssh/authorized_keys|/etc/passwd|/etc/shadow|WinExec|id_rsa|LD_PRELOAD)',
-   #  '[^\d\w](eval|exec|passthru|system|shell_exec|base64_decode|popen|proc_open|pcntl_exec|gzinflate|gzuncompress|Runtime.getRuntime\(\).exec|getenv|is_dir|getcwd|getServerInfo|System.getProperty|fsockopen|socket_create|socket_bind|WScript.Shell|assert|shell|create_function|posix_mkfifo|posix_setsid|posix_setuid|java.lang.Runtime|chr|ord|eval\(base64_decode|goto|extract|include|upload|str_rot13|strrev|gzdecode|urldecode|replace_callback|register_shutdown_function|register_tick_function|xp_execresultset|xp_regenumkeys|xp_cmdshell|xp_filelist|safe_mode bypass)[\( "]',
-   #  # "https://github.com/tenable/yara-rules/blob/master/webshells/"
-   #  "urldecode[\t ]*\([\t ]*'(%[0-9a-fA-F][0-9a-fA-F])+'[\t ]*\)",
-   #  # "https://github.com/nbs-system/php-malware-finder"  - Various bad Hex Strings
-   #  '(\\x47\\x4c\\x4f\\x42\\x41\\x4c\\x53|\\x65\\x76\\x61\\x6C\\x28|\\x65\\x78\\x65\\x63|\\x73\\x79\\x73\\x74\\x65\\x6d|\\x70\\x72\\x65\\x67\\x5f\\x72\\x65\\x70\\x6c\\x61\\x63\\x65|\\x48\\124\\x54\\120\\x5f\\125\\x53\\105\\x52\\137\\x41\\107\\x45\\116\\x54|\\x61\\x73\\x65\\x36\\x34\\x5f\\x64\\x65\\x63\\x6f\\x64\\x65\\x28\\x67\\x7a\\x69\\x6e\\x66\\x6c\\x61\\x74\\x65\\x28)',
-   #  # "https://github.com/nbs-system/php-malware-finder" - Various Bad hPack strings
-   #  '(474c4f42414c53|6576616C28|65786563|73797374656d|707265675f7265706c616365|61736536345f6465636f646528677a696e666c61746528)',
-   #  # "https://github.com/nbs-system/php-malware-finder" - Various bad Base64 Strings
-   #  '(SFRUUF9VU0VSX0FHRU5UCg|ZXZhbCg|c3lzdGVt|cHJlZ19yZXBsYWNl|ZXhlYyg|YmFzZTY0X2RlY29kZ|IyEvdXNyL2Jpbi9wZXJsCg|Y21kLmV4ZQ|cG93ZXJzaGVsbC5leGU)'
-   #  )
-    $lowConfidenceRegex = ('[^\d\w\W](gcc |chmod +x|/bin/sh|/bin/bash|BufferedInputStream|ByteArrayOutputStream|new BASE64Decoder|.decodeBuffer|VBscript.Encode|cmd|ini_set\(allow_url_fopen true\)|ini_set\(allow_url_include true\)|VBSCRIPT|Scripting.FileSystemObject|adodb.stream|system\(\$_GET|exploit|lave|noitcnuf_etaerc|metsys|urhtssap|llehs|etucexe_llehs|tressa|edoced_46esab|sserpmocnuzg|nepop|nepokcosf|tcartxe|posix_|win32_create_service|xmlrpc_decode|.bash_history|.ssh/authorized_keys|/etc/passwd|/etc/shadow|WinExec|id_rsa|LD_PRELOAD)',
-    '[^\d\w](eval|exec|passthru|system|shell_exec|base64_decode|popen|proc_open|pcntl_exec|gzinflate|gzuncompress|Runtime.getRuntime\(\).exec|getenv|is_dir|getcwd|getServerInfo|System.getProperty|fsockopen|socket_create|socket_bind|WScript.Shell|assert|shell|create_function|posix_mkfifo|posix_setsid|posix_setuid|java.lang.Runtime|chr|ord|eval\(base64_decode|goto|extract|include|upload|str_rot13|strrev|gzdecode|urldecode|replace_callback|register_shutdown_function|register_tick_function|xp_execresultset|xp_regenumkeys|xp_cmdshell|xp_filelist|safe_mode bypass)[\( "]',
-    # "https://github.com/tenable/yara-rules/blob/master/webshells/"
-    "urldecode[\t ]*\([\t ]*'(%[0-9a-fA-F][0-9a-fA-F])+'[\t ]*\)")
-    $highConfidenceRegex = (    # "https://github.com/nbs-system/php-malware-finder"  - Various bad Hex Strings
-    '(\\x47\\x4c\\x4f\\x42\\x41\\x4c\\x53|\\x65\\x76\\x61\\x6C\\x28|\\x65\\x78\\x65\\x63|\\x73\\x79\\x73\\x74\\x65\\x6d|\\x70\\x72\\x65\\x67\\x5f\\x72\\x65\\x70\\x6c\\x61\\x63\\x65|\\x48\\124\\x54\\120\\x5f\\125\\x53\\105\\x52\\137\\x41\\107\\x45\\116\\x54|\\x61\\x73\\x65\\x36\\x34\\x5f\\x64\\x65\\x63\\x6f\\x64\\x65\\x28\\x67\\x7a\\x69\\x6e\\x66\\x6c\\x61\\x74\\x65\\x28)',
-    # "https://github.com/nbs-system/php-malware-finder" - Various Bad hPack strings
-    '(474c4f42414c53|6576616C28|65786563|73797374656d|707265675f7265706c616365|61736536345f6465636f646528677a696e666c61746528)',
-    # "https://github.com/nbs-system/php-malware-finder" - Various bad Base64 Strings
-    '(SFRUUF9VU0VSX0FHRU5UCg|ZXZhbCg|c3lzdGVt|cHJlZ19yZXBsYWNl|ZXhlYyg|YmFzZTY0X2RlY29kZ|IyEvdXNyL2Jpbi9wZXJsCg|Y21kLmV4ZQ|cG93ZXJzaGVsbC5leGU)')
+   # $regexList = (
+   #       '[^\d\w\W](BufferedInputStream|ByteArrayOutputStream|new BASE64Decoder|.decodeBuffer|ini_set\(allow_url_fopen true\)|ini_set\(allow_url_include true\)|VBSCRIPT|Scripting.FileSystemObject|adodb.stream|system\(\$_GET|exploit|lave|noitcnuf_etaerc|metsys|urhtssap|llehs|etucexe_llehs|tressa|edoced_46esab|sserpmocnuzg|nepop|nepokcosf|tcartxe|posix_|win32_create_service|xmlrpc_decode|LD_PRELOAD)',
+   #       '[^\d\w](eval|passthru|base64_decode|popen|proc_open|pcntl_exec|gzinflate|gzuncompress|Runtime.getRuntime\(\).exec|getenv|is_dir|getcwd|getServerInfo|System.getProperty|create_function|posix_mkfifo|posix_setsid|posix_setuid|java.lang.Runtime|chr|ord|eval\(base64_decode|goto|extract|upload|str_rot13|strrev|gzdecode|urldecode|replace_callback|register_shutdown_function|register_tick_function|safe_mode bypass)[\( "]', 
+   #       # - https://github.com/nsacyber/Mitigating-Web-Shells/blob/master/extended.webshell_detection.yara
+   #       "urldecode[\t ]*\([\t ]*'(%[0-9a-fA-F][0-9a-fA-F])+'[\t ]*\)",
+   #       # "Var as Func" - https://github.com/nsacyber/Mitigating-Web-Shells/blob/master/extended.webshell_detection.yara
+   #       '\$_(GET|POST|COOKIE|REQUEST|SERVER)\s*\[[^\]]+\]\s*\(', 
+   #          #  concatenation of more than 5 words - https://github.com/nsacyber/Mitigating-Web-Shells/blob/master/extended.webshell_detection.yara
+   #       '(\$[^\n\r]+\. ){5}',
+   #       # concatenation of more than eight `chr()` - https://github.com/nsacyber/Mitigating-Web-Shells/blob/master/extended.webshell_detection.yara
+   #       '(chr\([\d]+\)\.){8}', 
+   #       # "variable_Variable" - https://github.com/nsacyber/Mitigating-Web-Shells/blob/master/extended.webshell_detection.yara
+   #       '\${\$[0-9a-zA-z]+}', 
+   #          # https://github.com/UltimateHackers/nano - https://github.com/nsacyber/Mitigating-Web-Shells/blob/master/extended.webshell_detection.yara
+   #       'base64_decode[^;]+getallheaders',
+   #       # https://github.com/UltimateHackers/nano - https://github.com/nsacyber/Mitigating-Web-Shells/blob/master/extended.webshell_detection.yara
+   #       '\$[a-z0-9-_]+\[[^]]+\]\(', 
+   #          # http://bartblaze.blogspot.fr/2015/03/c99shell-not-dead.html - https://github.com/nsacyber/Mitigating-Web-Shells/blob/master/extended.webshell_detection.yara
+   #       ';\$\w+\(\$\w+(,\s?\$\w+)+\);',
+   #       # Weevely3 Launcher - https://github.com/nsacyber/Mitigating-Web-Shells/blob/master/extended.webshell_detection.yara
+   #       '\$\w=\$[a-zA-Z]\('',\$\w\);\$\w\(\);', 
+   #          # B374k - https://github.com/nsacyber/Mitigating-Web-Shells/blob/master/extended.webshell_detection.yara
+   #       '(\$\w+=[^;]*)*;\$\w+=@?\$\w+\('         
+
+   #    )
+   $lowConfidenceRegex = (
+         '[^\d\w\W](BufferedInputStream|ByteArrayOutputStream|new BASE64Decoder|.decodeBuffer|ini_set\(allow_url_fopen true\)|ini_set\(allow_url_include true\)|VBSCRIPT|Scripting.FileSystemObject|adodb.stream|system\(\$_GET|exploit|lave|noitcnuf_etaerc|metsys|urhtssap|llehs|etucexe_llehs|tressa|edoced_46esab|sserpmocnuzg|nepop|nepokcosf|tcartxe|posix_|win32_create_service|xmlrpc_decode|LD_PRELOAD)',
+         '[^\d\w](eval|passthru|base64_decode|popen|proc_open|pcntl_exec|gzinflate|gzuncompress|Runtime.getRuntime\(\).exec|getenv|is_dir|getcwd|getServerInfo|System.getProperty|create_function|posix_mkfifo|posix_setsid|posix_setuid|java.lang.Runtime|chr|ord|eval\(base64_decode|goto|extract|upload|str_rot13|strrev|gzdecode|urldecode|replace_callback|register_shutdown_function|register_tick_function|safe_mode bypass)[\( "]', 
+         # - https://github.com/nsacyber/Mitigating-Web-Shells/blob/master/extended.webshell_detection.yara
+         "urldecode[\t ]*\([\t ]*'(%[0-9a-fA-F][0-9a-fA-F])+'[\t ]*\)",
+         # "Var as Func" - https://github.com/nsacyber/Mitigating-Web-Shells/blob/master/extended.webshell_detection.yara
+         '\$_(GET|POST|COOKIE|REQUEST|SERVER)\s*\[[^\]]+\]\s*\(', 
+            #  concatenation of more than 5 words - https://github.com/nsacyber/Mitigating-Web-Shells/blob/master/extended.webshell_detection.yara
+         '(\$[^\n\r]+\. ){5}',
+         # concatenation of more than eight `chr()` - https://github.com/nsacyber/Mitigating-Web-Shells/blob/master/extended.webshell_detection.yara
+         '(chr\([\d]+\)\.){8}', 
+         # "variable_Variable" - https://github.com/nsacyber/Mitigating-Web-Shells/blob/master/extended.webshell_detection.yara
+         '\${\$[0-9a-zA-z]+}', 
+            # https://github.com/UltimateHackers/nano - https://github.com/nsacyber/Mitigating-Web-Shells/blob/master/extended.webshell_detection.yara
+         'base64_decode[^;]+getallheaders',
+         # https://github.com/UltimateHackers/nano - https://github.com/nsacyber/Mitigating-Web-Shells/blob/master/extended.webshell_detection.yara
+         '\$[a-z0-9-_]+\[[^]]+\]\(', 
+            # http://bartblaze.blogspot.fr/2015/03/c99shell-not-dead.html - https://github.com/nsacyber/Mitigating-Web-Shells/blob/master/extended.webshell_detection.yara
+         ';\$\w+\(\$\w+(,\s?\$\w+)+\);',
+         # Weevely3 Launcher - https://github.com/nsacyber/Mitigating-Web-Shells/blob/master/extended.webshell_detection.yara
+         '\$\w=\$[a-zA-Z]\('',\$\w\);\$\w\(\);', 
+            # B374k - https://github.com/nsacyber/Mitigating-Web-Shells/blob/master/extended.webshell_detection.yara
+         '(\$\w+=[^;]*)*;\$\w+=@?\$\w+\('         
+
+   )
+   $highConfidenceRegex = (
+         '[^\d\w\W](gcc |chmod +x|/bin/sh|/bin/bash|VBscript.Encode|cmd|.bash_history|.ssh/authorized_keys|/etc/passwd|/etc/shadow|WinExec|id_rsa)',
+         '[^\d\w](exec|system|shell_exec|fsockopen|socket_create|socket_bind|WScript.Shell|assert|shell|xp_execresultset|xp_regenumkeys|xp_cmdshell|xp_filelist|)',
+         # - https://github.com/nsacyber/Mitigating-Web-Shells/blob/master/extended.webshell_detection.yara
+         '(\\x47\\x4c\\x4f\\x42\\x41\\x4c\\x53|\\x65\\x76\\x61\\x6C\\x28|\\x65\\x78\\x65\\x63|\\x73\\x79\\x73\\x74\\x65\\x6d|\\x70\\x72\\x65\\x67\\x5f\\x72\\x65\\x70\\x6c\\x61\\x63\\x65|\\x48\\124\\x54\\120\\x5f\\125\\x53\\105\\x52\\137\\x41\\107\\x45\\116\\x54|\\x61\\x73\\x65\\x36\\x34\\x5f\\x64\\x65\\x63\\x6f\\x64\\x65\\x28\\x67\\x7a\\x69\\x6e\\x66\\x6c\\x61\\x74\\x65\\x28)',
+         # - https://github.com/nsacyber/Mitigating-Web-Shells/blob/master/extended.webshell_detection.yara
+         '(474c4f42414c53|6576616C28|65786563|73797374656d|707265675f7265706c616365|61736536345f6465636f646528677a696e666c61746528)',
+         # - https://github.com/nsacyber/Mitigating-Web-Shells/blob/master/extended.webshell_detection.yara
+         '(SFRUUF9VU0VSX0FHRU5UCg|ZXZhbCg|c3lzdGVt|cHJlZ19yZXBsYWNl|ZXhlYyg|YmFzZTY0X2RlY29kZ|IyEvdXNyL2Jpbi9wZXJsCg|Y21kLmV4ZQ|cG93ZXJzaGVsbC5leGU)',
+         # md5 password protection  - https://github.com/nsacyber/Mitigating-Web-Shells/blob/master/extended.webshell_detection.yara
+         'md5\s*\(\s*\$_(GET|REQUEST|POST|COOKIE|SERVER)[^)]+\)\s*===?\s*["][0-9a-f]{32}["]',
+         # sha1 password protection - https://github.com/nsacyber/Mitigating-Web-Shells/blob/master/extended.webshell_detection.yara
+         'sha1\s*\(\s*\$_(GET|REQUEST|POST|COOKIE|SERVER)[^)]+\)\s*===?\s*["][0-9a-f]{40}["]'
+   )
     #-----------------------------------------------------------[Functions]------------------------------------------------------------
 
     Function Get-Entropy{
