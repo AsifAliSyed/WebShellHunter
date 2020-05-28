@@ -10,4 +10,4 @@ For this reason we have initially decided to write the tool in powershell. This 
 
 
 
-
+![Scan Results](https://github.com/ParaFlare/WebShellHunter/blob/master/Images/results.PNG)
