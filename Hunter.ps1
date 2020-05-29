@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
   Hunt for webshells inside a web server directory
 
