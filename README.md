@@ -59,3 +59,4 @@ to place a webshell in your web directory.
 - [ ] Make str_replace work with variables
 - [X] Make a To Do list to give me an easy win
 - [ ] Add Regression Testing
+- [ ] Regex file extensions to include non-standard extensions
