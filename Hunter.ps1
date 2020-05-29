@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Hunt for webshells inside a web server directory
 
@@ -25,6 +25,13 @@
   Threads will return information on execution times.
   Use this to find and optimize performance on slow functions
 
+.PARAMETER missedShells
+   if this is selected along with -testPath, we output to the screen any shells that the script didnt pick up
+   as webshells at all. Use for testing new detections
+
+.PARAMETER maxThreads
+   Set the Maximum number of threads to use. Default is half of the available threads on the system.
+
 .OUTPUTS
   Log file stored in current executing directory by default.
   Change output path with -logPath parameter. 
@@ -50,14 +57,16 @@ param (
    [Parameter(Mandatory=$false)] [string]$testPath,
    [Parameter(Mandatory=$false)] [string]$json,
    [Parameter(Mandatory=$false)] [switch]$detailed,
-   [Parameter(Mandatory=$false)] [switch]$error,
-   [Parameter(Mandatory=$false)] [switch]$speedInfo
+   [Parameter(Mandatory=$false)] [switch]$err,
+   [Parameter(Mandatory=$false)] [switch]$speedInfo,
+   [Parameter(Mandatory=$false)] [switch]$missedShells,
+   [Parameter(Mandatory=$false)] [int]$maxThreads = [int]$env:NUMBER_OF_PROCESSORS /2
 )
 
 #---------------------------------------------------------[Initialisations]--------------------------------------------------------
 
 #Set Error Action to Silently Continue
-if ($error) {
+if ($err) {
     $ErrorActionPreference = "Continue"
 }
 # Flip it to "continue" if you're having troubles and want more info.
@@ -69,13 +78,12 @@ if ($detailed) {
 if ($speedInfo) {
     $InformationPreference = "Continue"
 }
-
+if ($missedShells) {
+    $DebugPreference = "Continue"
+}
 $progressPreference = "Continue"
 
 #----------------------------------------------------------[Declarations]----------------------------------------------------------
-
-#Script Version
-$ScriptVersion = "1.0"
 
 # performance counter
 $stopwatch = New-object System.Diagnostics.Stopwatch
@@ -100,8 +108,9 @@ $filetypes = @(
 $scriptblock = {
     param (
         $file,
-        [switch]$detailed,
-        [switch]$speedInfo,
+        $detailed,
+        $speedInfo,
+        $missedShells,
         $testFile
     )
     
@@ -109,17 +118,20 @@ $scriptblock = {
     # We have to set the preference variables again inside our scriptblock as runspace threads do not inherit any of these
     # settings from the caller
     # Turn this on with -SpeedInfo on the commandline
-    if ($speedInfo) 
-    {
-       $InformationPreference = "Continue" 
-    }
-    $VerbosePreference = "Continue"
-
+   if ($speedinfo) {
+      $InformationPreference = "Continue" 
+   }
+   if ($detailed) {
+       $VerbosePreference = "Continue"
+   }
+   if ($missedShells) {
+       $DebugPreference = "Continue"
+   }
     #-----------------------------------------------------------[Variables]------------------------------------------------------------
 
     
     # Configuration for how many strings matches (or more) in a file before we call it a webshell.
-    $stringThreshold = 3
+    $stringThreshold = 4
     # Any entropy score over this number will be considered a webshell
     $entThresholdUpper = 5.7
     # Any entropy score under this number will be considered a webshell
@@ -182,13 +194,13 @@ $scriptblock = {
        Process{
           Try{
              # This function is taken from https://rosettacode.org/wiki/Entropy
-             # Ask me how it works at your own peril. The result is an entropy score.
+             # Ask me how it works are your own peril. The result is an entropy score.
              $n = $string.Length
-             $entropy = $string.ToCharArray() | group | foreach{
+             $entropy = $string.ToCharArray() | Group-Object | ForEach-Object {
                 $p = $_.Count/$n
                 $i = [Math]::Log($p,2)
                 -$p*$i
-             } | measure -Sum | foreach Sum
+             } | Measure-Object -Sum | ForEach-Object Sum
 
              return $entropy
           }
@@ -345,7 +357,7 @@ $scriptblock = {
                 $filecontents = $filecontents.Replace($src, $dst)
              }
              
-             $fileContents -split '\n' | % {
+             $fileContents -split '\n' | ForEach-Object {
                 $line = $_
                 if ($Line -match "^ *[\*/]") 
                 {
@@ -357,7 +369,7 @@ $scriptblock = {
                         $hit = ($line | select-string $condition -AllMatches).Matches.Value
                         if ($hit) 
                         { 
-                            $hit | % {                                          
+                            $hit | ForEach-Object {                                          
                                 Write-Verbose "Found Matches: $_`n"
                                 $null = $stringsMatched.Add($_)
                             }
@@ -365,7 +377,7 @@ $scriptblock = {
                         }
                     }
             }
-            $stringsMatched = $stringsMatched | select -Unique
+            $stringsMatched = $stringsMatched | Select-Object -Unique
             $stringCount = $stringsMatched.Count
              # The deobfuscated contents arent checked for webshell stuff here, simply passed back to Check-File to be put through all the usual tests.
              return $stringsMatched, $stringCount
@@ -401,6 +413,8 @@ $scriptblock = {
             [int]$lineLen = 0
             [string]$longestLine = "" 
             while ($null -ne ($line = $reader.ReadLine())) {
+                if ($line.Contains("svg")) { continue}
+                if ($line.Contains("data:image")) { continue }
                 if ($line.Length -gt $lineLen) {
                     $longestLine = $line
                     $lineLen = $line.Length
@@ -459,8 +473,8 @@ $scriptblock = {
                     }
                 }
             }
-            $MostAddedtoVarCount = ($VarsCount.GetEnumerator() | sort -property Value -Descending | select -first 1).value
-            $MostAddedtoVar = ($VarsCount.GetEnumerator() | sort -property Value -Descending | select -first 1).Name
+            $MostAddedtoVarCount = ($VarsCount.GetEnumerator() | Sort-Object -property Value -Descending | Select-Object -first 1).value
+            $MostAddedtoVar = ($VarsCount.GetEnumerator() | Sort-Object -property Value -Descending | Select-Object -first 1).Name
             $reader.Dispose()
             return $MostAddedtoVarCount, $MostAddedtoVar
             $reader.Dispose()
@@ -482,7 +496,7 @@ $scriptblock = {
        }
     }
 
-    Function Check-File
+    Function Search-Shells
     {
        Param($file)
 
@@ -541,7 +555,7 @@ $scriptblock = {
              # To stop from FP'ing so much we set a threshold that must be met before we declare the line long enough to be webshell
              $LongestLineLength, $longestLine = Get-LongestLineCount $fullpath
              # Specifically 'whitelisting' svg lines here as they are  commonly placed on one line and are massive enough to trigger.
-             if ($longestLineLength -ge $lineCountThreshold -and -not ($longestLine.Contains("svg"))) 
+             if ($longestLineLength -ge $lineCountThreshold) 
              {
                 Write-Verbose "WEBSHELLFOUND -LONGLINECOUNT: A Single line was $LongestLineLength characters long in $file`n" 
                 $scanResults["LongLine"] = [pscustomobject]@{
@@ -622,6 +636,10 @@ $scriptblock = {
                           Indicators =  "No indicators exist for entropy hits."}
              }
              Write-Verbose "-------------FILECHECKCOMPLETE--------------`n"
+             Write-Debug "$testFile $fullPath"
+             if ($testFile -eq $true -and $results.count -eq 0) {
+                Write-Debug "MISSED: $fullpath"
+             }
              return $scanResults
           }
           Catch
@@ -639,8 +657,16 @@ $scriptblock = {
    # ----------- Thread Execution --------------- #
    # These two lines are the only 'execution' lines, the rest of the thread scriptblock is just
    # Detection method functions for the Check-File function to call.
-   $scanResults = Check-File $file
-   return $file, $scanResults, $testFile
+   $scanResults = Search-Shells $file
+   [void]$fileResults.tryAdd( $file.name, [pscustomobject]@{
+      # $file actually contains all of the file metadata that powershell pulls when you gci a file. We dont trim it.
+      # Not sure if we should. 
+      filename          = $file.Name
+      filepath          = $file.Fullname
+      filelength        = $file.Length
+      scanResults       = $scanResults
+      IsTestFile        = $testFile
+   })
 }
 
 function normalize {
@@ -670,7 +696,7 @@ function normalize {
 
 }
 
-Function Generate-InterestingScore {
+Function New-InterestingScore {
     param(
         $results
     )
@@ -697,6 +723,13 @@ Function Generate-InterestingScore {
     }
     return $results
 }
+# Function to create thread-safe hashtable (requires .NET 4.0+):
+function New-ThreadSafeTypedDictionary([Type] $KeyType, [Type] $ValueType)
+{
+    $GenericDict = [System.Collections.Concurrent.ConcurrentDictionary``2]
+    $GenericDict = $GenericDict.MakeGenericType( @($KeyType, $ValueType) )
+    New-Object -TypeName $GenericDict 
+}
 
 
 #-----------------------------------------------------------[Execution]------------------------------------------------------------
@@ -705,18 +738,6 @@ $stopwatch.Start()
 
 # Results hashtable to store the result objects for each file scanned
 $results = New-Object -TypeName psobject
-# Runspace Pool Boilerplate, not interesting.
-# All we have changed is the max threads to run, which is half of the total on the current system
-$pool = [RunspaceFactory]::CreateRunspacePool(1,[int]$env:NUMBER_OF_PROCESSORS /2)
-$pool.ApartmentState = "MTA"
-$pool.Open()
-$runspaces = [System.Collections.ArrayList]@()
-
-# We'll store all the detection results for each file into this array and slap the array into the final 
-# $results custom object. 
-$fileResults = [System.Collections.ArrayList]@()
-$TestFileResults = [System.Collections.ArrayList]@()
-
 # Grab all the files for both our hunt path and test path that we are going to scan through later
 $files = Get-ChildItem -Path $huntPath -include $fileTypes -Recurse
 if ($testPath) {
@@ -728,83 +749,88 @@ if ($testpath ) {
 } else {
     $filecount = $files.count 
 }
-# Only used for the write-progress counter a few lines down
-$step = 1
-# This is the main loop that will search the huntPath. TestPath is handled later.
+if ($filecount -eq 0 ) {
+   Write-Error "No files found. Confirm your -huntPath"
+   Exit 
+}
+
+# The next block of code is setting up the multithreading stuff we need.
+# Big thanks to https://github.com/SamuelArnold/StarKill3r/blob/master/Star%20Killer/Star%20Killer/bin/Debug/Scripts/SANS-SEC505-master/scripts/Day1-PowerShell/Runspace-Pool-Examples.ps1
+# Most of this is taken from there, with only minor tweaking needed.
+# Create array to hold all of our runspaces
+$runspaces = @()
+# This is our threadsafe Hashtable we'll pass into each thread. Each thread will scan a seperate file
+# and store its results into this hashtable. 
+$fileResults = New-ThreadSafeTypedDictionary -KeyType 'String' -ValueType 'object' 
+# Define the initial session state for our pool
+$SessionState = [System.Management.Automation.Runspaces.InitialSessionState]::CreateDefault()
+$SessionState.ApartmentState = 'STA'
+$SessionState.ThreadOptions = 'ReuseThread'
+# Add a variable to the session state pool that can be used to pass in data and/or collect output:
+# ArgumentList = name of the variable, initial value of variable, an optional description
+$SessionVar = New-Object -TypeName System.Management.Automation.Runspaces.SessionStateVariableEntry -ArgumentList @("fileResults", $fileResults, 'detection method hits for each file') 
+$SessionState.Variables.Add( $SessionVar ) 
+# Create between 1 (min) and $maxthreads runspaces in a pool, with an initial session state, in the current PowerShell host:
+$Pool = [System.Management.Automation.Runspaces.RunspaceFactory]::CreateRunspacePool(1, $maxThreads, $SessionState, $Host)
+# Open the runspace pool:
+$Pool.Open()
+
+# Loop through all of our huntpath and testpath (if selected) files and create a runspace for each one, passing in any relevant switches
+# and then invoking the runspace.
 Write-Host "Creating Hunt Path runspaces" -ForegroundColor Yellow
+# We set testfile to false so that each thread in huntpath can note in its results that this file is part of huntpath.
+# this lets us seperate legitimate files vs test webshells later on.
 $testFile = $false
 foreach ($file in $files) 
 {
-    write-progress -Activity "Adding runspaces to pool" -Status "creating runspace $step/$filecount" -PercentComplete(($step / $filecount) * 100 )
-    $runspace = [PowerShell]::Create()
-    [void]$runspace.AddScript($scriptblock)
-    [void]$runspace.AddArgument($file)
-    [void]$runspace.AddArgument($testFile)
-    if ($detailed) {[void]$runspace.AddArgument($detailed)}
-    $runspace.runspacepool = $pool
-    $null = $runspaces.Add( [PSCustomObject]@{Pipe = $runspace; Status = $runspace.BeginInvoke()} )
-    if ($step -ne $filecount) {$step++}
+   # Generate the runspaces for all of the files in our huntpath
+   $runspace = [PowerShell]::Create()
+   [void]$runspace.AddScript($scriptblock)
+   [void]$runspace.AddArgument($file)
+   [void]$runspace.AddArgument($detailed)
+   [void]$runspace.AddArgument($speedInfo)
+   [void]$runspace.AddArgument($missedShells)
+   [void]$runspace.AddArgument($testfile)
+   $runspace.runspacepool = $pool
+   $runspaces += $runspace.BeginInvoke()
 }
 if ($testPath) {
-    $testFile = $true
-    foreach ($file in $testfiles) 
-    {
-        write-progress -Activity "Adding runspaces to pool" -Status "creating runspace $step/$filecount" -PercentComplete(($step / $filecount) * 100 )
-        $runspace = [PowerShell]::Create()
-        [void]$runspace.AddScript($scriptblock)
-        [void]$runspace.AddArgument($file)
-        [void]$runspace.AddArgument($testFile)
-        if ($detailed) {[void]$runspace.AddArgument($detailed)}
-        $runspace.runspacepool = $pool
-        $null = $runspaces.Add( [PSCustomObject]@{Pipe = $runspace; Status = $runspace.BeginInvoke()} )
-        if ($step -ne $filecount) {$step++}
-    }
+   # now set testfile to true to so we can tag all of these as testfiles within the threads returned results.
+   # again, this lets us seperate test files from legit files later so we can determine whether "caught" files are test ones or not.
+   $testFile = $true
+   # Generate the runspaces for all of the files in our testpath
+   foreach ($file in $testfiles) 
+   {
+      $runspace = [PowerShell]::Create()
+      [void]$runspace.AddScript($scriptblock)
+      [void]$runspace.AddArgument($file)
+      [void]$runspace.AddArgument($detailed)
+      [void]$runspace.AddArgument($speedInfo)
+      [void]$runspace.AddArgument($missedShells)
+      [void]$runspace.AddArgument($testfile)
+      $runspace.runspacepool = $pool
+      $runspaces += $runspace.BeginInvoke()
+   }
 }
-write-host "Hunt Path Runspaces created. Waiting for results to return." -ForegroundColor Green
+write-host "All Runspaces created. Waiting for results to return." -ForegroundColor Green
 
-while ($runspaces.Status -ne $null)
+#Loop Forever until all of our runspaces have reported in as complete
+while ($true)
 {
-    $completed = $runspaces | Where-object { $_.Status.IsCompleted -eq $true }
-    foreach ($runspace in $completed) 
-    {
-        write-progress -Activity "Retrieving runspace results" -Status "runspaces left $step/$filecount" -PercentComplete(($step / $filecount) * 100 )
-        # Output errors, verbose or speed information is the user has flipped the right switches
-        if ($error) 
-        {
-            Write-host $runspace.Pipe.Streams.Error
-        }
-        if ($detailed) 
-        {
-            Write-host $runspace.Pipe.Streams.Verbose -ForegroundColor Gray
-        }
-        if ($speedInfo) {
-            write-host $runspace.Pipe.Streams.Information -ForegroundColor DarkYellow
-        }
-
-            
-        $file, $scanResults, $testFile = $runspace.Pipe.EndInvoke($runspace.Status)
-        $runspace.Status = $null
-        if ($step -ne 1) {$step--}
-            
-        if ($scanResults.count -eq 0) {continue}
-        # I was storing all of the results into individual hashtables for each detection method.
-        # it was not scaling well and getting a bit messy. This custom object is the fix. We can now add
-        # as many detection functions as we like and they store into this object without 
-        # requiring extra code down here.
-        $null = $fileResults.Add( [pscustomobject]@{
-            # $file actually contains all of the file metadata that powershell pulls when you gci a file. We dont trim it.
-            # Not sure if we should. 
-            filename          = $file.Name
-            filepath          = $file.Fullname
-            filelength        = $file.Length
-            scanResults       = $scanResults
-            IsTestFile        = $testFile
-        })
-    }
+    
+   $runspaces | Where-Object { $_.IsCompleted -eq $False } | ForEach-Object { Continue }
+   # Clean up objects and break out of the While loop: 
+   $runspaces | ForEach-Object { $_.AsyncWaitHandle.Close() }
+   $runspaces = @() 
+   $runspace = $null 
+   $pool.Close()
+   $pool.Dispose() 
+   Break 
 }
-$pool.Close() 
-$pool.Dispose()
 
+# Trim fileresults down to just what the threads returned. We could skip this if we used some kind of thread safe array.
+# But I'm still learning.
+$fileResults = $fileResults.Values
 # We want to go through each detection methods results and pull out the top 10 results by score.
 # this lets us give the user a starting point for analysis. If we scan 3000 files and get 100 "webshells"
 # its hard to know which ones to check first and this tool probably just wouldnt be used at that point.
@@ -814,14 +840,13 @@ $checkedMethods = @()
 # Initially I was trying to just append straight to the final $results object as we went. 
 # but that messed the json output in a way I didnt like. So we store the top10's in an intermediary variable.
 $top10Results = New-object -TypeName psobject
-
 # Loop through each detection method so we can build up a top 10 list for each method that fired during this scan
 foreach ($method in $fileResults.scanresults.Keys) 
 {
     # Not sure why, but empty methods kept popping up, so we just skip them as an easy fix 
-    if (!($checkedMethods.Contains($method)) -and $method -ne $null) 
+    if (!($checkedMethods.Contains($method)) -and $null -ne $method ) 
     {
-        $top10 = $fileresults.GetEnumerator() | Sort-Object { $_.ScanResults.$method.Score } -Descending | Select -First 10
+        $top10 = $fileresults.GetEnumerator() | Where-Object {$_.scanResults.$method.Score -gt 0 } | Sort-Object { $_.ScanResults.$method.Score } -Descending | Select-Object -First 10
         # Gotta build up the key string before we make the custom object so that the key can be dynamically named
         $top10string = "top10$method"
         $top10results | add-member -memberType NoteProperty -Name $top10string -value $top10
@@ -831,11 +856,13 @@ foreach ($method in $fileResults.scanresults.Keys)
 }
 
 # Generate an "Interesting Score" for every file we had a hit on. This will build our "Top files to look at" table at the end.
-$fileResults = Generate-InterestingScore $fileResults
+$fileResults = New-InterestingScore $fileResults
 # Build the top ten most interesting files to look at based on the previously generated "Interesting Score"
 $top10Interesting = $fileResults.GetEnumerator() | Sort-Object { $_.InterestingScore} -Descending | Select-Object -Property @{Name="Score"; Expression={$_.interestingscore}}, filename, filepath -First 10
-$HitCount = ($fileResults.GetEnumerator() | where {$_.istestfile -eq $false}).count
-$TestFileHits = ($fileResults.GetEnumerator() | where {$_.istestfile -eq $true}).count
+# This is why set set $testfile and pass it to each runspace. We look for which files are testfiles and which ones arent to generate a count of
+# how many files we matches against in our huntpath vs our testpath
+$HitCount = ($fileResults.GetEnumerator() | Where-Object {$_.istestfile -eq $false}).count
+$TestFileHits = ($fileResults.GetEnumerator() | Where-Object {$_.istestfile -eq $true}).count
 
 # Build everything we have discovered into our final variable that we can JSONify later
 $results | Add-member -MemberType NoteProperty -Name "TotalFilesScanned" -Value $files.count
@@ -849,10 +876,10 @@ $results | Add-Member -MemberType NoteProperty -Name "TestFileResults" -Value $T
 
 #-----------------------------------------------------------[Print/Log Results]------------------------------------------------------------
 
-# Top 10 Files Overall Table
+# Print out of Top 10 Files Overall Table
 Write-Host "`n`n`t`tTop files to look at" -ForegroundColor Green
 $results.Top10overall  | Format-Table
-# Top Results for each detection method Table
+# Print out our Top Results for each detection method Table
 $results.top10PerMethod | Get-Member -type NoteProperty | foreach-object {
     $method = $_.name
     $methodShort = $_.name.Tostring().Replace("top10", "")
@@ -861,7 +888,7 @@ $results.top10PerMethod | Get-Member -type NoteProperty | foreach-object {
                                                      filename,
                                                     filepath | Format-Table
 }
-# Stats
+# Print some Stats
 write-host "`tHunt Directory:" $results.HitCount"/"$results.TotalFilesScanned -Foregroundcolor green
 if ($testPath) {
     write-host "`tTest Directory:" $results.TestFileHitCount"/"$results.TotalTestFilesScanned -Foregroundcolor yellow
