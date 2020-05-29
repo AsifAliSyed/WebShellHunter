@@ -129,31 +129,6 @@ $scriptblock = {
     # How many times a variable can be added to with .= before we declare webshell
     $varUsageThreshold = 50
     # List of strings to match against for our basic string match detections
-   # $regexList = (
-   #       '[^\d\w\W](BufferedInputStream|ByteArrayOutputStream|new BASE64Decoder|.decodeBuffer|ini_set\(allow_url_fopen true\)|ini_set\(allow_url_include true\)|VBSCRIPT|Scripting.FileSystemObject|adodb.stream|system\(\$_GET|exploit|lave|noitcnuf_etaerc|metsys|urhtssap|llehs|etucexe_llehs|tressa|edoced_46esab|sserpmocnuzg|nepop|nepokcosf|tcartxe|posix_|win32_create_service|xmlrpc_decode|LD_PRELOAD)',
-   #       '[^\d\w](eval|passthru|base64_decode|popen|proc_open|pcntl_exec|gzinflate|gzuncompress|Runtime.getRuntime\(\).exec|getenv|is_dir|getcwd|getServerInfo|System.getProperty|create_function|posix_mkfifo|posix_setsid|posix_setuid|java.lang.Runtime|chr|ord|eval\(base64_decode|goto|extract|upload|str_rot13|strrev|gzdecode|urldecode|replace_callback|register_shutdown_function|register_tick_function|safe_mode bypass)[\( "]', 
-   #       # - https://github.com/nsacyber/Mitigating-Web-Shells/blob/master/extended.webshell_detection.yara
-   #       "urldecode[\t ]*\([\t ]*'(%[0-9a-fA-F][0-9a-fA-F])+'[\t ]*\)",
-   #       # "Var as Func" - https://github.com/nsacyber/Mitigating-Web-Shells/blob/master/extended.webshell_detection.yara
-   #       '\$_(GET|POST|COOKIE|REQUEST|SERVER)\s*\[[^\]]+\]\s*\(', 
-   #          #  concatenation of more than 5 words - https://github.com/nsacyber/Mitigating-Web-Shells/blob/master/extended.webshell_detection.yara
-   #       '(\$[^\n\r]+\. ){5}',
-   #       # concatenation of more than eight `chr()` - https://github.com/nsacyber/Mitigating-Web-Shells/blob/master/extended.webshell_detection.yara
-   #       '(chr\([\d]+\)\.){8}', 
-   #       # "variable_Variable" - https://github.com/nsacyber/Mitigating-Web-Shells/blob/master/extended.webshell_detection.yara
-   #       '\${\$[0-9a-zA-z]+}', 
-   #          # https://github.com/UltimateHackers/nano - https://github.com/nsacyber/Mitigating-Web-Shells/blob/master/extended.webshell_detection.yara
-   #       'base64_decode[^;]+getallheaders',
-   #       # https://github.com/UltimateHackers/nano - https://github.com/nsacyber/Mitigating-Web-Shells/blob/master/extended.webshell_detection.yara
-   #       '\$[a-z0-9-_]+\[[^]]+\]\(', 
-   #          # http://bartblaze.blogspot.fr/2015/03/c99shell-not-dead.html - https://github.com/nsacyber/Mitigating-Web-Shells/blob/master/extended.webshell_detection.yara
-   #       ';\$\w+\(\$\w+(,\s?\$\w+)+\);',
-   #       # Weevely3 Launcher - https://github.com/nsacyber/Mitigating-Web-Shells/blob/master/extended.webshell_detection.yara
-   #       '\$\w=\$[a-zA-Z]\('',\$\w\);\$\w\(\);', 
-   #          # B374k - https://github.com/nsacyber/Mitigating-Web-Shells/blob/master/extended.webshell_detection.yara
-   #       '(\$\w+=[^;]*)*;\$\w+=@?\$\w+\('         
-
-   #    )
    $lowConfidenceRegex = (
          '[^\d\w\W](BufferedInputStream|ByteArrayOutputStream|new BASE64Decoder|.decodeBuffer|ini_set\(allow_url_fopen true\)|ini_set\(allow_url_include true\)|VBSCRIPT|Scripting.FileSystemObject|adodb.stream|system\(\$_GET|exploit|lave|noitcnuf_etaerc|metsys|urhtssap|llehs|etucexe_llehs|tressa|edoced_46esab|sserpmocnuzg|nepop|nepokcosf|tcartxe|posix_|win32_create_service|xmlrpc_decode|LD_PRELOAD)',
          '[^\d\w](eval|passthru|base64_decode|popen|proc_open|pcntl_exec|gzinflate|gzuncompress|Runtime.getRuntime\(\).exec|getenv|is_dir|getcwd|getServerInfo|System.getProperty|create_function|posix_mkfifo|posix_setsid|posix_setuid|java.lang.Runtime|chr|ord|eval\(base64_decode|goto|extract|upload|str_rot13|strrev|gzdecode|urldecode|replace_callback|register_shutdown_function|register_tick_function|safe_mode bypass)[\( "]', 
