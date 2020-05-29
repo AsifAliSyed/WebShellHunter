@@ -41,14 +41,17 @@ Steps:
 ## Examples
 
 Scan C:\Inetpub\wwwroot and output the results to .\results.json
+
 `.\Hunter.ps1 -HuntPath C:\Inetpub\wwwroot\ -json results.json`
 
 Scan from the current directory with no test path and no results file
+
 `.\Hunter.ps1`
 
 Scan a web directory and also scan a second directory with legitimate webshell inside it. This is useful
 to test whether or not a webshell would have been detected amidst the noise of your legitimate files, without having
 to place a webshell in your web directory.
+
 `.\Hunter.ps1 -HuntPath C:\Inetpub\wwwroot -testPath c:\users\webshells\testshells\ -json results.json`
 
 
