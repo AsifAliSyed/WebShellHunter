@@ -21,21 +21,21 @@ Steps:
 
 ## Switches
 
-* **-HuntPath**
+* `-HuntPath`
    The directory you would like to hunt for webshells in
-* **-testPath**
+* `-testPath`
    A second optional directory where you can place some actual webshell to test detections
-* **-json**
+* `-json`
   Path to output results in JSON format
-* **-detailed**
+* `-detailed`
  Threads will return verbose messaging as they scan files.
  This will impact performance and is meant for debugging.
-* **-err**
+* `-err`
  Turn on error messaging from threads
-* **-speedInfo**
+* `-speedInfo`
   Threads will return information on execution times.
   Use this to find and optimize performance on slow functions
-* **-missedShells**
+* `-missedShells`
   Use this if you have -testPath selected to also output whenever a shell in your testpath is missed by every single detection method
   
 ## Examples
