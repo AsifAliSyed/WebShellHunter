@@ -60,7 +60,8 @@ param (
    [Parameter(Mandatory=$false)] [switch]$err,
    [Parameter(Mandatory=$false)] [switch]$speedInfo,
    [Parameter(Mandatory=$false)] [switch]$missedShells,
-   [Parameter(Mandatory=$false)] [int]$maxThreads = [int]$env:NUMBER_OF_PROCESSORS /2
+   [Parameter(Mandatory=$false)] [int]$maxThreads = [int]$env:NUMBER_OF_PROCESSORS /2,
+   [Parameter(Mandatory=$false)] [switch]$testing
 )
 
 #---------------------------------------------------------[Initialisations]--------------------------------------------------------
@@ -180,484 +181,7 @@ $scriptblock = {
       # sha1 password protection - https://github.com/nsacyber/Mitigating-Web-Shells/blob/master/extended.webshell_detection.yara
       'sha1\s*\(\s*\$_(GET|REQUEST|POST|COOKIE|SERVER)[^)]+\)\s*===?\s*["][0-9a-f]{40}["]'
    )
-    #-----------------------------------------------------------[Functions]------------------------------------------------------------
-
-    Function Get-Entropy{
-       Param($string)
-
-       Begin{
-            Write-Verbose "ENTROPY: Getting Entropy`n" 
-            $stopwatch = New-object System.Diagnostics.Stopwatch
-            $stopwatch.Start()
-       }
-
-       Process{
-          Try{
-             # This function is taken from https://rosettacode.org/wiki/Entropy
-             # Ask me how it works are your own peril. The result is an entropy score.
-             $n = $string.Length
-             $entropy = $string.ToCharArray() | Group-Object | ForEach-Object {
-                $p = $_.Count/$n
-                $i = [Math]::Log($p,2)
-                -$p*$i
-             } | Measure-Object -Sum | ForEach-Object Sum
-
-             return $entropy
-          }
-      
-          Catch{
-             Write-Error "ENTROPY: $_.Exception "
-             Break
-          }
-       }
-
-       End{
-          If($?){
-            Write-Verbose "ENTROPY: Entropy score of $entropy`n"
-            $timeTaken = $stopwatch.Elapsed.TotalSeconds
-            Write-Information "ENTROPY TIME:`t`tfunction executed in $timeTaken Seconds`n"
-          }
-       }
-    }
-
-    Function Find-BadStrings{
-       Param($file)
-
-       Begin{
-          Write-Verbose "STRINGMATCH: Checking for badstrings`n"
-          $stopwatch = New-object System.Diagnostics.Stopwatch
-          $stopwatch.Start()
-       }
-
-       Process{
-          Try{
-             # We want to count how many blacklisted strings are in our file and return it so that we can
-             # later check against $stringThreshold and determine if we are calling it a webshell
-             # based on how many string matches occured. 
-             $reader =  New-Object System.IO.StreamReader("$file")
-
-             # Intiate separate arrays for low and high confidence matches. Required to due to difference in score weighting. High confidence matches being scored higher then low confidence.
-             $lcStringsMatched = [System.Collections.ArrayList]@()
-             $hcStringsMatched = [System.Collections.ArrayList]@()
-             $linecount = 0
-             # Score weighting. High confidence hits will be x by the below, in this case 5. 1 becomes 5.
-             $scoreWeighting = 5
-             while ($null -ne ($line = $reader.Readline())) 
-             {
-                $linecount++
-                if ($linecount -eq 10000) 
-                {
-                     $lcStringsMatched = $lcStringsMatched | Select-Object -Unique
-                     $hcStringsMatched = $hcStringsMatched | Select-Object -Unique
-                     $stringCount = ($hcStringsMatched.Count * $scoreWeighting) + $lcStringsMatched.Count
-                     $stringsmatched = $lcStringsMatched + $hcStringsMatched
-                     return $stringCount, $stringsMatched
-               }
-                if ($Line.length -eq 0 -or $Line -match "^ *[\*/]") 
-                {
-                    continue
-                }
-                foreach ($condition in $lowConfidenceRegex) 
-                {
-                    if ($line -match $condition) 
-                    { 
-                        $null = $lcStringsMatched.Add($Matches.0)
-                        
-                    }
-                }
-                foreach ($condition in $highConfidenceRegex) 
-                {
-                    if ($line -match $condition) 
-                    { 
-                        $null = $hcStringsMatched.Add($Matches.0)
-                        
-                    }
-                }
-
-             }
-             $reader.Dispose()
-             $lcStringsMatched = $lcStringsMatched | Select-Object -Unique
-             $hcStringsMatched = $hcStringsMatched | Select-Object -Unique
-             $stringCount = ($hcStringsMatched.Count * $scoreWeighting) + $lcStringsMatched.Count
-             $stringsmatched = $lcStringsMatched + $hcStringsMatched
-             return $stringCount, $stringsMatched
-          }
-      
-          Catch{
-             Write-Error "BADSTRING: $_.Exception "
-             Break
-          }
-       }
-
-       End{
-          If($?){
-            Write-Verbose "STRINGMATCH: found $stringCount string matches`n"
-            $timeTaken = $stopwatch.Elapsed.TotalSeconds
-            Write-Information "BADSTRINGS TIME:`tfunction executed in $timeTaken Seconds`n"
-          }
-       }
-    }
-
-    Function Find-StrReplaceObfuscation{
-       Param($fileContents)
-
-       Begin{
-        Write-Verbose "STRREPLACE: Checking for String Replace Sneakiness`n"
-        $stopwatch = New-object System.Diagnostics.Stopwatch
-        $stopwatch.Start()
-       }
-
-       Process{
-          Try{
-             $stringsMatched = [System.Collections.ArrayList]@()
-             
-             # This will pull an array of every line containing a str_replace and all of its associated garbage
-             # we'll trim it down to size next.
-             $keys = $filecontents -split '\n' | Select-String "str_replace"
-             # we have to loop over every str_replace because its common to have a few different obfuscations that need to be undone
-             foreach ($key in $keys) {
-                # Gotta string each line so we can do our string operations like indexOf.
-                # its not a string initially but a [Microsoft.PowerShell.Commands.MatchInfo] 
-                $key = $key.ToString()
-                # Replace any double quotes with single quotes, so we dont have to deal with the possibility
-                # of double OR single quotes in our keys for the rest of our operations. Sounds trivial but
-                # saves a ton of headaches.
-                $key = $key.replace('"', "'")
-                $key = $key.replace(" ", "")
-                # backslashes were ruining my day, Idk how to escape them within variables for the .split function ahead.
-                # So if we are finding something with a backslash, just dont even bother.
-                if ($key -match "str_replace.'',''.") {
-                   $key = $key.replace("str_replace(''","str_replace(' '")
-                   continue
-                }
-                # Find where str_replace is in the line so we can cut out the rest of the lines garbage
-                # that we dont care about
-                $i =  $key.IndexOf("str_replace")
-                # this effectively cuts out all of the start of the string up until the first key e.g.
-                # $B=str_replace('xJ','','cxJrexJxJatxJe_fuxJnctixJon');
-                #  gets trimmed to
-                # 'xJ','','cxJrexJxJatxJe_fuxJnctixJon');
-                # now we are sitting at our decoding key
-                $key = $key.substring($i+12)
-                # using the example above, splitting by , and grabbing the 0th index gives us 'xJ' which is our decoding 
-                if ($key -match "('[\w]*,[\w]+')|('[\w]+,[\w]*')") {
-                   # write-host "skipping key: $key"
-                   continue
-                }
-                $src = $key.Split((','))[0]
-                # and grabbing the 1st index gives us '' which is what to replace it with. It's usually an empty string but attackers can be
-                # weird, so put in the ability to replace the key with whatever the attacker chooses.
-                $dst = $key.Split((','))[1]
-                # Strip out the ' characters so we can match properly.
-                # e.g. "xJ" becomes xJ. Without this we just wouldnt match anything and the obfuscation remains.
-                $src = $src -replace "'",""
-                $dst = $dst -replace "'",""      
-                # String the filecontents so we can do a .replace annnddd
-                $fileContents = $fileContents.ToString()
-                # DECODE
-                
-                Write-Verbose "REPLACE: src:$src dst:$dst`n"
-                $filecontents = $filecontents.Replace($src, $dst)
-             }
-             
-             $fileContents -split '\n' | ForEach-Object {
-                $line = $_
-                if ($Line -match "^ *[\*/]") 
-                {
-                    continue
-                }
-                 write-verbose "CHECKING: $line`n"
-                 foreach ($condition in $regexList) 
-                    {
-                        $hit = ($line | select-string $condition -AllMatches).Matches.Value
-                        if ($hit) 
-                        { 
-                            $hit | ForEach-Object {                                          
-                                Write-Verbose "Found Matches: $_`n"
-                                $null = $stringsMatched.Add($_)
-                            }
-                        
-                        }
-                    }
-            }
-            $stringsMatched = $stringsMatched | Select-Object -Unique
-            $stringCount = $stringsMatched.Count
-             # The deobfuscated contents arent checked for webshell stuff here, simply passed back to Check-File to be put through all the usual tests.
-             return $stringsMatched, $stringCount
-          }
-          Catch{
-             Write-Error "STRREPLACE: $_.Exception "
-             Break
-          }
-       }
-
-       End{
-          If($?){
-            $count = $keys.count
-            Write-Verbose "STRREPLACE: found and replaced $count str_replace keys.`n"
-            $timeTaken = $stopwatch.Elapsed.TotalSeconds
-            Write-Information "STRREPLACE TIME:`tfunction executed in $timeTaken Seconds`n"
-          }
-       }
-    }
-
-    Function Get-LongestLineCount{
-       Param($file)
-
-       Begin{
-          Write-Verbose "LONGESTLINE: Finding Longest Line Length`n"
-          $stopwatch = New-object System.Diagnostics.Stopwatch
-          $stopwatch.Start()
-       }
-
-       Process{
-          Try{
-                 $reader =  New-Object System.IO.StreamReader("$file")
-            [int]$lineLen = 0
-            [string]$longestLine = "" 
-            while ($null -ne ($line = $reader.ReadLine())) {
-                if ($line.Contains("svg")) { continue}
-                if ($line.Contains("data:image")) { continue }
-                if ($line.Length -gt $lineLen) {
-                    $longestLine = $line
-                    $lineLen = $line.Length
-                }
-            }
-            $reader.Dispose()
-             
-            return $lineLen, $longestLine               
-
-          }
-      
-          Catch{
-             Write-Error "LONGLINE: $_.Exception "
-             Break
-          }
-       }
-
-       End{
-          If($?){
-            Write-Verbose "LONGESTLINE: Longest Line Length is $LineLen characters`n"
-            $timeTaken = $stopwatch.Elapsed.TotalSeconds
-            Write-Information "LONGLINE TIME:`t`tfunction executed in $timeTaken Seconds`n"
-          }
-       }
-    }
-
-    Function Get-VariableUsageCount{
-       Param($file)
-
-       Begin{
-          Write-Verbose "OVERLYUSEDVARIABLE: Find Variable with the most additions`n"
-          $stopwatch = New-object System.Diagnostics.Stopwatch
-          $stopwatch.Start()
-       }
-
-       Process{
-          Try{
-             $reader =  New-Object System.IO.StreamReader("$file")
    
-            $varsCount = @{}
-            while ($null -ne ($line = $reader.ReadLine()))
-            {
-        
-       
-                if ($line -match ('(\$[\d\w]+ +\.=)'))
-                {
-                  $val = $Matches.0
-                    if ($VarsCount.Containskey($val)) 
-                    {
-                        $VarsCount[$val]++
-                        
-                    } 
-                    else 
-                    {
-                        $VarsCount[$val] = 1
-                    }
-                }
-            }
-            $MostAddedtoVarCount = ($VarsCount.GetEnumerator() | Sort-Object -property Value -Descending | Select-Object -first 1).value
-            $MostAddedtoVar = ($VarsCount.GetEnumerator() | Sort-Object -property Value -Descending | Select-Object -first 1).Name
-            $reader.Dispose()
-            return $MostAddedtoVarCount, $MostAddedtoVar
-            $reader.Dispose()
-
-          }
-      
-          Catch{
-             Write-Error "VARUSAGE:" $_.Exception 
-             Break
-          }
-       }
-
-       End{
-          If($?){
-            Write-Verbose "OVERLYUSEDVARIABLE: The most used variable has additions made $mostAddedToVarCount times.`n"
-            $timeTaken = $stopwatch.Elapsed.TotalSeconds
-            Write-Information "VARUSAGE TIME:`t`tfunction executed in $timeTaken Seconds`n"
-          }
-       }
-    }
-
-    Function Search-Shells
-    {
-       Param($file)
-
-       Begin
-       {
-          Write-Verbose "FILECHECK: Checking file $file`n"
-          Write-Information "TIMING FILE $file`n"
-          $stopwatch = New-object System.Diagnostics.Stopwatch
-          $stopwatch.Start()
-       }
-       Process
-       {
-          Try
-          {
-             # Each file will have its scan results stored in a hashtable that looks something along the lines of what is
-             # shown in the example inside the variable declaration. This hashtable is what each thread returns and is what
-             # will later be stored into $fileResults
-             $scanResults = @{
-             #                  "scanResults":  {
-             #                      "BadStrings":  {
-             #                          "Score":  5,
-             #                          "Indicators":  [
-             #                              "\"Upload\"",
-             #                              "@eval(",
-             #                              "(is_dir(",
-             #                              "(base64_decode(",
-             #                              "(str_rot13("
-             #                          ]
-             #                      },
-             #                      "Entropy":  {
-             #                          "Score":  6.109601908390065,
-             #                          "Indicators":  "No indicators exist for entropy hits."
-             #                      }
-             #                  }
-             #
-             }
-             # This property contains the full path including filename e.g. c:\users\test\webshell.php
-             $fullPath = $file.FullName
-             # Some functions require the full content of the file rather than line by line reading
-             # so we extract is once here and pass it around
-             $content =  [System.IO.File]::ReadAlltext("$fullpath")
-             # We use this later to detect really small files that have a bad string
-             $linecount = ($content | Measure-Object -Line).Lines 
-             # Large file slow down execution significantly, we trim the file to stop extremely large files from bogging us down
-             # while still leaving enough of the file to detect web shells (hopefully).
-             # This doesnt effect String matching as we do that line by line. it only effects functions that we pass $content to.
-             # Like Get-Entropy for example, which shouldnt hopefully be effected too much by the limit.
-             $len = $content.length
-             if ($len -ge 50000) {
-                $content = $content.substring(0,50000)
-             }
-             # This one's pretty simple. Attackers who base64 encode a payload or hex encode it or whatever sometimes
-             # kind of stop there as far as obfuscation goes and just plop the whole string down on one line.
-             # Coding practices prevent (haha) developers from doing this (haha) so we look for very large strings
-             # on a single line here. In practice, some devs throw massive slabs of code without a line break.
-             # To stop from FP'ing so much we set a threshold that must be met before we declare the line long enough to be webshell
-             $LongestLineLength, $longestLine = Get-LongestLineCount $fullpath
-             # Specifically 'whitelisting' svg lines here as they are  commonly placed on one line and are massive enough to trigger.
-             if ($longestLineLength -ge $lineCountThreshold) 
-             {
-                Write-Verbose "WEBSHELLFOUND -LONGLINECOUNT: A Single line was $LongestLineLength characters long in $file`n" 
-                $scanResults["LongLine"] = [pscustomobject]@{
-                    Score = $longestLineLength
-                    Indicators =  $longestLine.Substring(0,100)
-                }
-             }
-
-             # I tested this tool against hideshell (https://github.com/0verl0ad/HideShell) and all the previous
-             # Checks missed for various reason. Hideshell base64 encodes your webshell and then breaks up that
-             # base64 string into lots and lots of substrings that it rebuilts like this:
-             #     z .= "GJSRP"
-             #     z .= "APVKS"
-             #     z .= "PKWMV"
-             # And so on for thousands of lines. I figured a clever way to defeat this kind of obfuscation
-             # is to look for variables beings "added to" (.= or +=) and then count how many times each variable
-             # gets added to. To rebuild a base64 string into one variable with small chunks, you HAVE to add to it
-             # LOTS of times. So we look for variables that are added to LOTS of time. I dont really see regular
-             # scripts adding to a variable 400 times in one script but bad guys definitely do that.
-             $varCount, $var = Get-VariableUsageCount $file.fullname
-             # I've found so far that the threshold should be atleast above 50. Its not uncommon for a normal php scipt
-             # to play with a variable 40 odd times in different spots (like building html request or w/e).
-             if ($varCount -ge $varUsageThreshold) 
-             {
-                Write-Verbose "WEBSHELL FOUND - OVERLYUSEDVARIABLE: $varCount - $var  `tin file $fullPath`n"
-                $scanResults["overusedVar"] = [pscustomobject]@{
-                        Score = $varCount
-                        Indicators =  $var
-                        }
-             }
-             # check the number of string matches in this file against our array of regex's at the top of scriptblock
-             $badStringCount, $stringsMatched = Find-BadStrings $file.fullname
-             
-             # Nearly all legitimate files use atleast one of our blacklisted strings
-             # so we set a threshold that must be met before declaring something a webshell.
-             # helps lower FP counts dramatically.
-             # We also check for $linecount to be less than or equal to 5 with atleast one badstring.
-             # This should catch those sneaky 1-2 line webshells that bypass AV so often. 
-             if ($badStringCount -ge $stringThreshold -or ($badStringCount -ge 1 -and $lineCount -le 5)) 
-             {
-                Write-Verbose "WEBSHELLFOUND BADSTRINGS: Found $badStringCount bad strings for $file`n"
-                # We dont want to scan entropy unless we have to, so if we reach our entropy threshold
-                # call it a webshell match and move on.
-                $scanResults["BadStrings"] =  [pscustomobject]@{
-                        Score = $badStringCount
-                        Indicators = $stringsMatched
-                        }
-             }
-             # I saw quite a few webshells with something like bXZaseXZ64CZ_decoXZde followed by a str_replace("XZ", "")
-             # to deobfuscate the base64_decode call. This function will take any files that have a str_replace function (its
-             # harder to obfuscate that since you need it to remove the obfuscation) and attempt to perform the string replacement
-             # to expose any potentially obfuscated calls that would have otherwise been missed. 
-             # TODO: Try to cover str_replace that uses variables. we can only deobfuscate when strings are used in str_replace atm
-             if ($content -match "str_replace\([`"'][\w\W]+[`"'],[`"']{2},") 
-             {
-                $strRepMatches, $strRepCount = Find-StrReplaceObfuscation $content
-                # We check our newly returned "bad strings count" against the old $badstringcount from before the deobfuscation attempt
-                # was conducted. If we get even one new bad string we arecalling it a webshell since we shouldn't really ever find a bad string
-                # by doing a string replace. Thats just too shady.
-                if ($strRepCount -gt $badStringCount) 
-                {
-                    Write-Verbose "WEBSHELLFOUND DEOBFUSCATEDSTRINGS: deobfuscation found $badStringCount bad strings for $file`n" 
-                    # Always return if we find a webshell. Speed is an issue with powershell
-                    $scanResults["StrReplace"] =  [pscustomobject]@{
-                        Score = $strRepCount
-                        Indicators =  $strRepMatches
-                        }
-                }
-             }
-             # Entropy may help us find encoded or encrypted data chunks that commonly reside in webshells.
-             $entropyScore = Get-Entropy $content
-             # Super low entropy scores could indicate single line webshells, so we look for that. Still testing if this theory is sane though
-             # once entropy is high enough we also dont FP too much on regular web files, so we look for high entropy too.
-             if ($entropyScore -ge $entThresholdUpper -or $entropyScore -le $entThresholdLower) 
-             {
-                Write-Verbose "WEBSHELLFOUND HIGHENTROPY:  Entropy score of $entropyScore for $file`n"
-                $scanResults["Entropy"] =  [pscustomobject]@{
-                          Score = $entropyScore
-                          Indicators =  "No indicators exist for entropy hits."}
-             }
-             Write-Verbose "-------------FILECHECKCOMPLETE--------------`n"
-             
-             if ($testFile -eq $true -and $scanresults.count -eq 0) {
-                Write-Debug "MISSED: $fullpath"
-             }
-             return $scanResults
-          }
-          Catch
-          {
-             Write-Error "CHECKFILE: "$_.Exception
-             Break
-          }
-       }
-       End
-       {
-            $timeTaken = $stopwatch.Elapsed.TotalSeconds
-            Write-Information "CHECKFILE TIME:`tfunction executed in $timeTaken Seconds`n"
-       }
-    }
    # ----------- Thread Execution --------------- #
    # These two lines are the only 'execution' lines, the rest of the thread scriptblock is just
    # Detection method functions for the Check-File function to call.
@@ -673,6 +197,482 @@ $scriptblock = {
          scanResults       = $scanResults
          IsTestFile        = $testFile
       })
+   }
+}
+Function Get-Entropy{
+   Param($string)
+
+   Begin{
+        Write-Verbose "ENTROPY: Getting Entropy`n" 
+        $stopwatch = New-object System.Diagnostics.Stopwatch
+        $stopwatch.Start()
+   }
+
+   Process{
+      Try{
+         # This function is taken from https://rosettacode.org/wiki/Entropy
+         # Ask me how it works are your own peril. The result is an entropy score.
+         $n = $string.Length
+         $entropy = $string.ToCharArray() | Group-Object | ForEach-Object {
+            $p = $_.Count/$n
+            $i = [Math]::Log($p,2)
+            -$p*$i
+         } | Measure-Object -Sum | ForEach-Object Sum
+
+         return $entropy
+      }
+  
+      Catch{
+         Write-Error "ENTROPY: $_.Exception "
+         Break
+      }
+   }
+
+   End{
+      If($?){
+        Write-Verbose "ENTROPY: Entropy score of $entropy`n"
+        $timeTaken = $stopwatch.Elapsed.TotalSeconds
+        Write-Information "ENTROPY TIME:`t`tfunction executed in $timeTaken Seconds`n"
+      }
+   }
+}
+
+Function Find-BadStrings{
+   Param($file)
+
+   Begin{
+      Write-Verbose "STRINGMATCH: Checking for badstrings`n"
+      $stopwatch = New-object System.Diagnostics.Stopwatch
+      $stopwatch.Start()
+   }
+
+   Process{
+      Try{
+         # We want to count how many blacklisted strings are in our file and return it so that we can
+         # later check against $stringThreshold and determine if we are calling it a webshell
+         # based on how many string matches occured. 
+         $reader =  New-Object System.IO.StreamReader("$file")
+
+         # Intiate separate arrays for low and high confidence matches. Required to due to difference in score weighting. High confidence matches being scored higher then low confidence.
+         $lcStringsMatched = [System.Collections.ArrayList]@()
+         $hcStringsMatched = [System.Collections.ArrayList]@()
+         $linecount = 0
+         # Score weighting. High confidence hits will be x by the below, in this case 5. 1 becomes 5.
+         $scoreWeighting = 5
+         while ($null -ne ($line = $reader.Readline())) 
+         {
+            $linecount++
+            if ($linecount -eq 10000) 
+            {
+                 $lcStringsMatched = $lcStringsMatched | Select-Object -Unique
+                 $hcStringsMatched = $hcStringsMatched | Select-Object -Unique
+                 $stringCount = ($hcStringsMatched.Count * $scoreWeighting) + $lcStringsMatched.Count
+                 $stringsmatched = $lcStringsMatched + $hcStringsMatched
+                 return $stringCount, $stringsMatched
+           }
+            if ($Line.length -eq 0 -or $Line -match "^ *[\*/]") 
+            {
+                continue
+            }
+            foreach ($condition in $lowConfidenceRegex) 
+            {
+                if ($line -match $condition) 
+                { 
+                    $null = $lcStringsMatched.Add($Matches.0)
+                    
+                }
+            }
+            foreach ($condition in $highConfidenceRegex) 
+            {
+                if ($line -match $condition) 
+                { 
+                    $null = $hcStringsMatched.Add($Matches.0)
+                    
+                }
+            }
+
+         }
+         $reader.Dispose()
+         $lcStringsMatched = $lcStringsMatched | Select-Object -Unique
+         $hcStringsMatched = $hcStringsMatched | Select-Object -Unique
+         $stringCount = ($hcStringsMatched.Count * $scoreWeighting) + $lcStringsMatched.Count
+         $stringsmatched = $lcStringsMatched + $hcStringsMatched
+         return $stringCount, $stringsMatched
+      }
+  
+      Catch{
+         Write-Error "BADSTRING: $_.Exception "
+         Break
+      }
+   }
+
+   End{
+      If($?){
+        Write-Verbose "STRINGMATCH: found $stringCount string matches`n"
+        $timeTaken = $stopwatch.Elapsed.TotalSeconds
+        Write-Information "BADSTRINGS TIME:`tfunction executed in $timeTaken Seconds`n"
+      }
+   }
+}
+
+Function Find-StrReplaceObfuscation{
+   Param($fileContents)
+
+   Begin{
+    Write-Verbose "STRREPLACE: Checking for String Replace Sneakiness`n"
+    $stopwatch = New-object System.Diagnostics.Stopwatch
+    $stopwatch.Start()
+   }
+
+   Process{
+      Try{
+         $stringsMatched = [System.Collections.ArrayList]@()
+         
+         # This will pull an array of every line containing a str_replace and all of its associated garbage
+         # we'll trim it down to size next.
+         $keys = $filecontents -split '\n' | Select-String "str_replace"
+         # we have to loop over every str_replace because its common to have a few different obfuscations that need to be undone
+         foreach ($key in $keys) {
+            # Gotta string each line so we can do our string operations like indexOf.
+            # its not a string initially but a [Microsoft.PowerShell.Commands.MatchInfo] 
+            $key = $key.ToString()
+            # Replace any double quotes with single quotes, so we dont have to deal with the possibility
+            # of double OR single quotes in our keys for the rest of our operations. Sounds trivial but
+            # saves a ton of headaches.
+            $key = $key.replace('"', "'")
+            $key = $key.replace(" ", "")
+            # backslashes were ruining my day, Idk how to escape them within variables for the .split function ahead.
+            # So if we are finding something with a backslash, just dont even bother.
+            if ($key -match "str_replace.'',''.") {
+               $key = $key.replace("str_replace(''","str_replace(' '")
+               continue
+            }
+            # Find where str_replace is in the line so we can cut out the rest of the lines garbage
+            # that we dont care about
+            $i =  $key.IndexOf("str_replace")
+            # this effectively cuts out all of the start of the string up until the first key e.g.
+            # $B=str_replace('xJ','','cxJrexJxJatxJe_fuxJnctixJon');
+            #  gets trimmed to
+            # 'xJ','','cxJrexJxJatxJe_fuxJnctixJon');
+            # now we are sitting at our decoding key
+            $key = $key.substring($i+12)
+            # using the example above, splitting by , and grabbing the 0th index gives us 'xJ' which is our decoding 
+            if ($key -match "('[\w]*,[\w]+')|('[\w]+,[\w]*')") {
+               # write-host "skipping key: $key"
+               continue
+            }
+            $src = $key.Split((','))[0]
+            # and grabbing the 1st index gives us '' which is what to replace it with. It's usually an empty string but attackers can be
+            # weird, so put in the ability to replace the key with whatever the attacker chooses.
+            $dst = $key.Split((','))[1]
+            # Strip out the ' characters so we can match properly.
+            # e.g. "xJ" becomes xJ. Without this we just wouldnt match anything and the obfuscation remains.
+            $src = $src -replace "'",""
+            $dst = $dst -replace "'",""      
+            # String the filecontents so we can do a .replace annnddd
+            $fileContents = $fileContents.ToString()
+            # DECODE
+            
+            Write-Verbose "REPLACE: src:$src dst:$dst`n"
+            $filecontents = $filecontents.Replace($src, $dst)
+         }
+         
+         $fileContents -split '\n' | ForEach-Object {
+            $line = $_
+            if ($Line -match "^ *[\*/]") 
+            {
+                continue
+            }
+             write-verbose "CHECKING: $line`n"
+             foreach ($condition in $regexList) 
+                {
+                    $hit = ($line | select-string $condition -AllMatches).Matches.Value
+                    if ($hit) 
+                    { 
+                        $hit | ForEach-Object {                                          
+                            Write-Verbose "Found Matches: $_`n"
+                            $null = $stringsMatched.Add($_)
+                        }
+                    
+                    }
+                }
+        }
+        $stringsMatched = $stringsMatched | Select-Object -Unique
+        $stringCount = $stringsMatched.Count
+         # The deobfuscated contents arent checked for webshell stuff here, simply passed back to Check-File to be put through all the usual tests.
+         return $stringsMatched, $stringCount
+      }
+      Catch{
+         Write-Error "STRREPLACE: $_.Exception "
+         Break
+      }
+   }
+
+   End{
+      If($?){
+        $count = $keys.count
+        Write-Verbose "STRREPLACE: found and replaced $count str_replace keys.`n"
+        $timeTaken = $stopwatch.Elapsed.TotalSeconds
+        Write-Information "STRREPLACE TIME:`tfunction executed in $timeTaken Seconds`n"
+      }
+   }
+}
+
+Function Get-LongestLineCount{
+   Param($file)
+
+   Begin{
+      Write-Verbose "LONGESTLINE: Finding Longest Line Length`n"
+      $stopwatch = New-object System.Diagnostics.Stopwatch
+      $stopwatch.Start()
+   }
+
+   Process{
+      Try{
+             $reader =  New-Object System.IO.StreamReader("$file")
+        [int]$lineLen = 0
+        [string]$longestLine = "" 
+        while ($null -ne ($line = $reader.ReadLine())) {
+            if ($line.Contains("svg")) { continue}
+            if ($line.Contains("data:image")) { continue }
+            if ($line.Length -gt $lineLen) {
+                $longestLine = $line
+                $lineLen = $line.Length
+            }
+        }
+        $reader.Dispose()
+         
+        return $lineLen, $longestLine               
+
+      }
+  
+      Catch{
+         Write-Error "LONGLINE: $_.Exception "
+         Break
+      }
+   }
+
+   End{
+      If($?){
+        Write-Verbose "LONGESTLINE: Longest Line Length is $LineLen characters`n"
+        $timeTaken = $stopwatch.Elapsed.TotalSeconds
+        Write-Information "LONGLINE TIME:`t`tfunction executed in $timeTaken Seconds`n"
+      }
+   }
+}
+
+Function Get-VariableUsageCount{
+   Param($file)
+
+   Begin{
+      Write-Verbose "OVERLYUSEDVARIABLE: Find Variable with the most additions`n"
+      $stopwatch = New-object System.Diagnostics.Stopwatch
+      $stopwatch.Start()
+   }
+
+   Process{
+      Try{
+         $reader =  New-Object System.IO.StreamReader("$file")
+
+        $varsCount = @{}
+        while ($null -ne ($line = $reader.ReadLine()))
+        {
+    
+   
+            if ($line -match ('(\$[\d\w]+ +\.=)'))
+            {
+              $val = $Matches.0
+                if ($VarsCount.Containskey($val)) 
+                {
+                    $VarsCount[$val]++
+                    
+                } 
+                else 
+                {
+                    $VarsCount[$val] = 1
+                }
+            }
+        }
+        $MostAddedtoVarCount = ($VarsCount.GetEnumerator() | Sort-Object -property Value -Descending | Select-Object -first 1).value
+        $MostAddedtoVar = ($VarsCount.GetEnumerator() | Sort-Object -property Value -Descending | Select-Object -first 1).Name
+        $reader.Dispose()
+        return $MostAddedtoVarCount, $MostAddedtoVar
+        $reader.Dispose()
+
+      }
+  
+      Catch{
+         Write-Error "VARUSAGE:" $_.Exception 
+         Break
+      }
+   }
+
+   End{
+      If($?){
+        Write-Verbose "OVERLYUSEDVARIABLE: The most used variable has additions made $mostAddedToVarCount times.`n"
+        $timeTaken = $stopwatch.Elapsed.TotalSeconds
+        Write-Information "VARUSAGE TIME:`t`tfunction executed in $timeTaken Seconds`n"
+      }
+   }
+}
+
+Function Search-Shells
+{
+   Param($file)
+
+   Begin
+   {
+      Write-Verbose "FILECHECK: Checking file $file`n"
+      Write-Information "TIMING FILE $file`n"
+      $stopwatch = New-object System.Diagnostics.Stopwatch
+      $stopwatch.Start()
+   }
+   Process
+   {
+      Try
+      {
+         # Each file will have its scan results stored in a hashtable that looks something along the lines of what is
+         # shown in the example inside the variable declaration. This hashtable is what each thread returns and is what
+         # will later be stored into $fileResults
+         $scanResults = @{
+         #                  "scanResults":  {
+         #                      "BadStrings":  {
+         #                          "Score":  5,
+         #                          "Indicators":  [
+         #                              "\"Upload\"",
+         #                              "@eval(",
+         #                              "(is_dir(",
+         #                              "(base64_decode(",
+         #                              "(str_rot13("
+         #                          ]
+         #                      },
+         #                      "Entropy":  {
+         #                          "Score":  6.109601908390065,
+         #                          "Indicators":  "No indicators exist for entropy hits."
+         #                      }
+         #                  }
+         #
+         }
+         # This property contains the full path including filename e.g. c:\users\test\webshell.php
+         $fullPath = $file.FullName
+         # Some functions require the full content of the file rather than line by line reading
+         # so we extract is once here and pass it around
+         $content =  [System.IO.File]::ReadAlltext("$fullpath")
+         # We use this later to detect really small files that have a bad string
+         $linecount = ($content | Measure-Object -Line).Lines 
+         # Large file slow down execution significantly, we trim the file to stop extremely large files from bogging us down
+         # while still leaving enough of the file to detect web shells (hopefully).
+         # This doesnt effect String matching as we do that line by line. it only effects functions that we pass $content to.
+         # Like Get-Entropy for example, which shouldnt hopefully be effected too much by the limit.
+         $len = $content.length
+         if ($len -ge 50000) {
+            $content = $content.substring(0,50000)
+         }
+         # This one's pretty simple. Attackers who base64 encode a payload or hex encode it or whatever sometimes
+         # kind of stop there as far as obfuscation goes and just plop the whole string down on one line.
+         # Coding practices prevent (haha) developers from doing this (haha) so we look for very large strings
+         # on a single line here. In practice, some devs throw massive slabs of code without a line break.
+         # To stop from FP'ing so much we set a threshold that must be met before we declare the line long enough to be webshell
+         $LongestLineLength, $longestLine = Get-LongestLineCount $fullpath
+         # Specifically 'whitelisting' svg lines here as they are  commonly placed on one line and are massive enough to trigger.
+         if ($longestLineLength -ge $lineCountThreshold) 
+         {
+            Write-Verbose "WEBSHELLFOUND -LONGLINECOUNT: A Single line was $LongestLineLength characters long in $file`n" 
+            $scanResults["LongLine"] = [pscustomobject]@{
+                Score = $longestLineLength
+                Indicators =  $longestLine.Substring(0,100)
+            }
+         }
+
+         # I tested this tool against hideshell (https://github.com/0verl0ad/HideShell) and all the previous
+         # Checks missed for various reason. Hideshell base64 encodes your webshell and then breaks up that
+         # base64 string into lots and lots of substrings that it rebuilts like this:
+         #     z .= "GJSRP"
+         #     z .= "APVKS"
+         #     z .= "PKWMV"
+         # And so on for thousands of lines. I figured a clever way to defeat this kind of obfuscation
+         # is to look for variables beings "added to" (.= or +=) and then count how many times each variable
+         # gets added to. To rebuild a base64 string into one variable with small chunks, you HAVE to add to it
+         # LOTS of times. So we look for variables that are added to LOTS of time. I dont really see regular
+         # scripts adding to a variable 400 times in one script but bad guys definitely do that.
+         $varCount, $var = Get-VariableUsageCount $file.fullname
+         # I've found so far that the threshold should be atleast above 50. Its not uncommon for a normal php scipt
+         # to play with a variable 40 odd times in different spots (like building html request or w/e).
+         if ($varCount -ge $varUsageThreshold) 
+         {
+            Write-Verbose "WEBSHELL FOUND - OVERLYUSEDVARIABLE: $varCount - $var  `tin file $fullPath`n"
+            $scanResults["overusedVar"] = [pscustomobject]@{
+                    Score = $varCount
+                    Indicators =  $var
+                    }
+         }
+         # check the number of string matches in this file against our array of regex's at the top of scriptblock
+         $badStringCount, $stringsMatched = Find-BadStrings $file.fullname
+         
+         # Nearly all legitimate files use atleast one of our blacklisted strings
+         # so we set a threshold that must be met before declaring something a webshell.
+         # helps lower FP counts dramatically.
+         # We also check for $linecount to be less than or equal to 5 with atleast one badstring.
+         # This should catch those sneaky 1-2 line webshells that bypass AV so often. 
+         if ($badStringCount -ge $stringThreshold -or ($badStringCount -ge 1 -and $lineCount -le 10)) 
+         {
+            Write-Verbose "WEBSHELLFOUND BADSTRINGS: Found $badStringCount bad strings for $file`n"
+            # We dont want to scan entropy unless we have to, so if we reach our entropy threshold
+            # call it a webshell match and move on.
+            $scanResults["BadStrings"] =  [pscustomobject]@{
+                    Score = $badStringCount
+                    Indicators = $stringsMatched
+                    }
+         }
+         # I saw quite a few webshells with something like bXZaseXZ64CZ_decoXZde followed by a str_replace("XZ", "")
+         # to deobfuscate the base64_decode call. This function will take any files that have a str_replace function (its
+         # harder to obfuscate that since you need it to remove the obfuscation) and attempt to perform the string replacement
+         # to expose any potentially obfuscated calls that would have otherwise been missed. 
+         # TODO: Try to cover str_replace that uses variables. we can only deobfuscate when strings are used in str_replace atm
+         if ($content -match "str_replace\([`"'][\w\W]+[`"'],[`"']{2},") 
+         {
+            $strRepMatches, $strRepCount = Find-StrReplaceObfuscation $content
+            # We check our newly returned "bad strings count" against the old $badstringcount from before the deobfuscation attempt
+            # was conducted. If we get even one new bad string we arecalling it a webshell since we shouldn't really ever find a bad string
+            # by doing a string replace. Thats just too shady.
+            if ($strRepCount -gt $badStringCount) 
+            {
+                Write-Verbose "WEBSHELLFOUND DEOBFUSCATEDSTRINGS: deobfuscation found $badStringCount bad strings for $file`n" 
+                # Always return if we find a webshell. Speed is an issue with powershell
+                $scanResults["StrReplace"] =  [pscustomobject]@{
+                    Score = $strRepCount
+                    Indicators =  $strRepMatches
+                    }
+            }
+         }
+         # Entropy may help us find encoded or encrypted data chunks that commonly reside in webshells.
+         $entropyScore = Get-Entropy $content
+         # Super low entropy scores could indicate single line webshells, so we look for that. Still testing if this theory is sane though
+         # once entropy is high enough we also dont FP too much on regular web files, so we look for high entropy too.
+         if ($entropyScore -ge $entThresholdUpper -or $entropyScore -le $entThresholdLower) 
+         {
+            Write-Verbose "WEBSHELLFOUND HIGHENTROPY:  Entropy score of $entropyScore for $file`n"
+            $scanResults["Entropy"] =  [pscustomobject]@{
+                      Score = $entropyScore
+                      Indicators =  "No indicators exist for entropy hits."}
+         }
+         Write-Verbose "-------------FILECHECKCOMPLETE--------------`n"
+         
+         if ($testFile -eq $true -and $scanresults.count -eq 0) {
+            Write-Debug "MISSED: $fullpath"
+         }
+         return $scanResults
+      }
+      Catch
+      {
+         Write-Error "CHECKFILE: "$_.Exception
+         Break
+      }
+   }
+   End
+   {
+        $timeTaken = $stopwatch.Elapsed.TotalSeconds
+        Write-Information "CHECKFILE TIME:`tfunction executed in $timeTaken Seconds`n"
    }
 }
 
@@ -739,8 +739,10 @@ function New-ThreadSafeTypedDictionary([Type] $KeyType, [Type] $ValueType)
 }
 
 
-#-----------------------------------------------------------[Execution]------------------------------------------------------------
 
+#-----------------------------------------------------------[Execution]------------------------------------------------------------
+function main
+{
 $stopwatch.Start()
 
 # Results hashtable to store the result objects for each file scanned
@@ -777,6 +779,20 @@ $SessionState.ThreadOptions = 'ReuseThread'
 # ArgumentList = name of the variable, initial value of variable, an optional description
 $SessionVar = New-Object -TypeName System.Management.Automation.Runspaces.SessionStateVariableEntry -ArgumentList @("fileResults", $fileResults, 'detection method hits for each file') 
 $SessionState.Variables.Add( $SessionVar ) 
+$funcs = @(
+   "Find-BadStrings", 
+   "Get-Entropy",
+   "Get-VariableUsageCount", 
+   "Get-LongestLineCount",
+   "Search-Shells"
+)
+foreach ($func in $funcs) {
+   #Get body of function
+   $definition = Get-Content Function:/$func
+   #Create a sessionstate funciton entry
+   $sessionStateFunction = New-Object System.Management.Automation.Runspaces.SessionStateFunctionEntry -ArgumentList $func, $definition
+   $sessionState.Commands.Add($sessionStateFunction)
+}
 # Create between 1 (min) and $maxthreads runspaces in a pool, with an initial session state, in the current PowerShell host:
 $Pool = [System.Management.Automation.Runspaces.RunspaceFactory]::CreateRunspacePool(1, $maxThreads, $SessionState, $Host)
 # Open the runspace pool:
@@ -917,3 +933,5 @@ if ($detailed) {
 if ($missedShells) {
     $DebugPreference = "SilentlyContinue"
 }
+}
+Main
